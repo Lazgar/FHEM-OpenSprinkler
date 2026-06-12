@@ -216,7 +216,9 @@ sub OpenSprinkler_Poll($) {
                         for (my $i = 0; $i < @$stations; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
                         }
-                        readingsBulkUpdate($hash, "total_stations", $stations->{nstations}) if exists $stations->{nstations};
+
+                        my $nstations = $json->{status};
+                        readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
                     }
 
                     readingsBulkUpdate($hash, "state", "connected");
