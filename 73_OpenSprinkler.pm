@@ -47,68 +47,64 @@ sub OpenSprinkler_Undefine($$) {
 }
 
 # Befehle verarbeiten (set ...)
-sub OpenSprinkler_Set($@) {
+sub OpenSprinkler_Set {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
-    
-    # Befehlsstruktur für das FHEM-Frontend generieren (8 Stationen)
-    my @cmd_list;
-    for (my $i = 0; $i < 8; $i++) {
-        push(@cmd_list, "station_" . $i . "_start:textField");
-        push(@cmd_list, "station_" . $i . "_stop:noArg");
-    }
-    push(@cmd_list, "rainDelay:textField");
-    push(@cmd_list, "system_enabled:on,off");
-    
-    my $usage = join(" ", @cmd_list);
-    return $usage if (@a < 2);
-    
-    my $cmd = $a[1];
-    
-    # 1. STATION STARTEN (set <name> station_X_start <Sekunden>)
-    if ($cmd =~ /^station_([0-7])_start$/) {
-        my $sid = $1;
-        return "Usage: set $name $cmd <seconds>" if (@a < 3);
-        my $sekunden = $a[2]; 
-        
-        # Sichert den echten Sekunden-Wert nativ im Reading
-        readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
-        
-        my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=1&t=$sekunden";
-        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.");
-        return undef;
+    my $cmd = $a[1]; # In FHEM-Set-Funktionen ist $a[1] der Befehl
+
+    # Dynamische Befehlsliste generieren basierend auf erkannten Stations-Boards
+    my $max_st = $hash->{helper}{max_stations} // 8;
+    my @station_cmds;
+    for (my $i = 0; $i < $max_st; $i++) {
+        push(@station_cmds, "station_${i}_start", "station_${i}_stop");
     }
     
-    # 2. STATION STOPPEN (set <name> station_X_stop)
-    elsif ($cmd =~ /^station_([0-7])_stop$/) {
-        my $sid = $1;
-        
-        readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
-        
-        my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=0";
-        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestoppt.");
-        return undef;
+    # Kombiniert die Standard-Befehle mit den dynamischen Stations-Befehlen
+    my $list = "rainDelay system_enabled:on,off " . join(" ", @station_cmds);
+
+    return "Unknown argument $cmd, choose one of $list" if (!defined($cmd));
+
+    # Basis-URL für die API-Steuerung des OpenSprinklers
+    my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW};
+
+    if ($cmd eq "system_enabled") {
+        my $val = ($a[2] eq "on") ? 1 : 0;
+        $url .= "&en=$val";
     }
-    
-    # 3. GLOBALE REGEN-VERZÖGERUNG (set <name> rainDelay <Stunden>)
     elsif ($cmd eq "rainDelay") {
-        return "Usage: set $name $cmd <hours>" if (@a < 3);
-        my $hours = $a[2];
-        my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&rd=$hours";
-        OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
-        return undef;
+        my $val = $a[2] // 0;
+        $url .= "&rd=$val";
     }
-    
-    # 4. SYSTEM-BETRIEB (set <name> system_enabled on|off)
-    elsif ($cmd eq "system_enabled") {
-        return "Usage: set $name $cmd on|off" if (@a < 3);
-        my $state = ($a[2] eq "on") ? 1 : 0;
-        my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&en=$state";
-        OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $a[2] gesetzt");
-        return undef;
+    elsif ($cmd =~ /^station_(\d+)_start$/) {
+        my $sid = $1;
+        my $dur = $a[2] // 60; # Nutzt 60 Sekunden als Standard, falls keine Zeit übergeben wurde
+        $url .= "&sid=$sid&t=$dur";
+    }
+    elsif ($cmd =~ /^station_(\d+)_stop$/) {
+        my $sid = $1;
+        $url .= "&sid=$sid&t=0";
+    }
+    else {
+        return "Unknown argument $cmd, choose one of $list";
     }
 
-    return $usage;
+    # Befehl asynchron absetzen, damit FHEM während des Netzwerk-Requests nicht blockiert
+    HttpUtils_NonblockingGet({
+        url => $url,
+        timeout => 5,
+        hash => $hash,
+        callback => sub {
+            my ($param, $err, $data) = @_;
+            if ($err) {
+                Log3 $name, 3, "OpenSprinkler ($name): Set-Befehl fehlgeschlagen: $err";
+            } else {
+                # Sofortiger Status-Poll, damit das FHEM-Frontend direkt aktualisiert wird
+                OpenSprinkler_Poll($hash);
+            }
+        }
+    });
+
+    return undef;
 }
 
 sub OpenSprinkler_Get($@) {
