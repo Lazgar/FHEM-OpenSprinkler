@@ -24,17 +24,13 @@ sub OpenSprinkler_Define($$) {
 
     return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
 
-    # KORREKTUR: Zuweisung der Parameter über die korrekten Array-Indizes
-    my $name = $a[0]; 
-    my $ip   = $a[2]; 
-    my $pw   = $a[3]; 
-
-    $hash->{NAME} = $name;
-    $hash->{IP}   = $ip;
-    $hash->{PW}   = md5_hex($pw); 
+    # FESTE VERANKERUNG: Parameter direkt an das FHEM-Hash-Objekt binden!
+    $hash->{NAME} = $a[0]; # Der vom User gewählte Gerätename
+    $hash->{IP}   = $a[2]; # Die IP-Adresse der Hardware
+    $hash->{PW}   = md5_hex($a[3]); # MD5-Passworthash generieren
 
     # Standard-Intervall für Status-Updates: 60 Sekunden vordefinieren
-    $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
+    $attr{$a[0]}{interval} = 60 if (!defined($attr{$a[0]}{interval}));
 
     RemoveInternalTimer($hash);
     OpenSprinkler_Poll($hash);
@@ -70,6 +66,7 @@ sub OpenSprinkler_Set($@) {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
     
+    # Befehlsstruktur für das FHEM-Frontend generieren (8 Stationen)
     my @cmd_list;
     for (my $i = 0; $i < 8; $i++) {
         push(@cmd_list, "station_" . $i . "_start:textField");
@@ -89,6 +86,7 @@ sub OpenSprinkler_Set($@) {
         return "Usage: set $name $cmd <seconds>" if (@a < 3);
         my $sekunden = $a[2]; 
         
+        # Sichert den Sekunden-Sollwert im Reading
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
         
         my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=1&t=$sekunden";
@@ -192,11 +190,11 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "rain_delay_until", "none");
                     }
                     
-                    # KORREKTUR: Krisensichere Zuweisung der Array-Indizes für lrun
+                    # NATIVE CODIERUNG: Indizes für lrun-Array fest fixiert!
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
-                        my $last_sid = $lrun->[0]; 
-                        my $last_dur = $lrun->[2]; 
+                        my $last_sid = $lrun->[0]; # Index 0 = Stations-ID
+                        my $last_dur = $lrun->[2]; # Index 2 = Dauer in Sekunden
                         
                         if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
                             readingsBulkUpdate($hash, "station_" . $last_sid . "_lastRealDuration", $last_dur);
@@ -214,7 +212,7 @@ sub OpenSprinkler_Poll($) {
                     # Ventilzustände (on/off) aus "status"
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         my $stations = $json->{status}->{sn};
-                        for (my $i = 0; $i < @$stations; $i++) {
+                        for (my $i = 0; $i < @$names; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
                         }
                     }
@@ -229,6 +227,7 @@ sub OpenSprinkler_Poll($) {
         }
     });
 
+    # Intervall dynamisch laden
     my $interval = 60;
     if (defined($attr{$name}) && defined($attr{$name}{interval})) {
         $interval = int($attr{$name}{interval});
@@ -255,7 +254,4 @@ sub OpenSprinkler_SendCommand($$$) {
             
             eval {
                 my $res = decode_json($data);
-                if (exists $res->{result} && $res->{result} == 1) {
-                    Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";
-                    OpenSprinkler_Poll($hash);
-}};}});}1;
+if (exists $res->{result} && $res->{result} == 1) {Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";OpenSprinkler_Poll($hash);}};}});}1;
