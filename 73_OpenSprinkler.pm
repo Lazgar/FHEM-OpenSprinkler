@@ -200,7 +200,7 @@ sub OpenSprinkler_Poll($) {
                         my $last_dur = $lrun->[2]; 
                         
                         if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
-                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastRealDuration", $last_dur);
+                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastDuration", $last_dur);
                         }
                     }
                     
