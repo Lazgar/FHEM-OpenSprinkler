@@ -201,7 +201,9 @@ sub OpenSprinkler_Poll($) {
                             readingsBulkUpdate($hash, "station_" . $last_sid . "_lastDuration", $last_dur);
                         }
                     }
-                    
+                    readingsEndUpdate($hash, 1);
+
+                    readingsBeginUpdate($hash);
                     # Stationsnamen (snames) aus "stations"
                     if (exists $json->{stations} && exists $json->{stations}->{snames}) {
                         my $names = $json->{stations}->{snames};
@@ -209,7 +211,9 @@ sub OpenSprinkler_Poll($) {
                             readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
                         }
                     }
-                    
+                    readingsEndUpdate($hash, 1);
+
+                    readingsBeginUpdate($hash);
                     # Ventilzustände (on/off) aus "status"
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         my $stations = $json->{status}->{sn};
@@ -258,4 +262,13 @@ sub OpenSprinkler_SendCommand($$$) {
             
             eval {
                 my $res = decode_json($data);
-if (exists $res->{result} && $res->{result} == 1) {Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";OpenSprinkler_Poll($hash);}};}});}1;
+                if (exists $res->{result} && $res->{result} == 1) {
+                    Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";
+                    OpenSprinkler_Poll($hash);
+                }
+            };
+        }
+    });
+}
+
+1;
