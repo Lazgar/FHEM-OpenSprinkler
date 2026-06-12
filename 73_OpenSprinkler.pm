@@ -119,100 +119,116 @@ sub OpenSprinkler_Get($@) {
 }
 
 # Zyklischer Haupt-Datenabruf (Status-Poll über /ja)
-sub OpenSprinkler_Poll($) {
+sub OpenSprinkler_Poll {
     my ($hash) = @_;
     my $name = $hash->{NAME};
-    my $url = "http://$hash->{IP}/ja?pw=$hash->{PW}";
+
+    # Timer für den nächsten Poll setzen
+    my $interval = AttrVal($name, "interval", 60);
+    RemoveInternalTimer($hash);
+    InternalTimer(time() + $interval, "OpenSprinkler_Poll", $hash, 0);
 
     HttpUtils_NonblockingGet({
-        url     => $url,
+        url => "http://" . $hash->{IP} . "/ja?pw=" . $hash->{PW},
         timeout => 5,
-        hash    => $hash,
+        hash => $hash,
         callback => sub {
             my ($param, $err, $data) = @_;
             my $hash = $param->{hash};
-            
+            my $name = $hash->{NAME};
+
             if ($err) {
-                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] Fehler beim Polling: $err";
+                Log3 $name, 3, "OpenSprinkler ($name): HTTP-Fehler beim Pollen: $err";
                 readingsSingleUpdate($hash, "state", "error", 1);
                 return;
             }
-            
+
+            if (!$data) {
+                Log3 $name, 3, "OpenSprinkler ($name): Keine Daten empfangen.";
+                readingsSingleUpdate($hash, "state", "disconnected", 1);
+                return;
+            }
+
+            # ABSICHERUNG: eval verhindert den Absturz bei defektem/leerem JSON
+            my $decoded;
             eval {
-                my $json = decode_json($data);
-                
-                if (exists $json->{settings}) {
-                    my $s = $json->{settings};
-                    readingsBeginUpdate($hash);
-                    
-                    # Globale Live-Hardware-Werte aus "settings"
-                    readingsBulkUpdate($hash, "flow_total_clicks", $s->{flcto}) if exists $s->{flcto};
-                    readingsBulkUpdate($hash, "current_mA", $s->{curr}) if exists $s->{curr};
-                    readingsBulkUpdate($hash, "water_level_percent", $s->{wl}) if exists $s->{wl};
-                    
-                    # System-Informationen aus "options" parsen
-                    if (exists $json->{options}) {
-                        my $o = $json->{options};
-                        readingsBulkUpdate($hash, "firmware_version", $o->{fwv}) if exists $o->{fwv};
-                        readingsBulkUpdate($hash, "hardware_mac", $o->{mac}) if exists $o->{mac};
-                        readingsBulkUpdate($hash, "extension_boards_count", $o->{npkg}) if exists $o->{npkg};
-                        
-                        if (exists $o->{devtype}) {
-                            my %types = (1=>"OSPi (Raspberry)", 2=>"OpenSprinkler AC", 3=>"OpenSprinkler DC", 4=>"OpenSprinkler Lane");
-                            readingsBulkUpdate($hash, "hardware_type", $types{$o->{devtype}} // "Unknown ($o->{devtype})");
-                        }
-                    }
-                    
-                    # Sensoren und Verzögerungen aus "settings"
-                    readingsBulkUpdate($hash, "system_enabled", $s->{en} ? "on" : "off") if exists $s->{en};
-                    readingsBulkUpdate($hash, "sensor_rain", $s->{rs} ? "rain" : "dry") if exists $s->{rs};
-                    readingsBulkUpdate($hash, "rain_delay_active", $s->{rd} ? "on" : "off") if exists $s->{rd};
-                    
-                    if (exists $s->{rdst} && $s->{rdst} > 0) {
-                        readingsBulkUpdate($hash, "rain_delay_until", "".localtime($s->{rdst}));
-                    } else {
-                        readingsBulkUpdate($hash, "rain_delay_until", "none");
-                    }
-                    
-                    # Letzten echten Durchlauf (lrun) parsen (KORREKTUR: Indizes wieder eingesetzt)
-                    if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
-                        my $lrun = $s->{lrun};
-                        my $last_sid = $lrun->[0]; # Index 0 = Stations-ID
-                        my $last_dur = $lrun->[2]; # Index 2 = Dauer in Sekunden
-                        
-                        if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
-                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastRealDuration", $last_dur);
-                        }
-                    }
-                    
-                    # Stationsnamen (snames) aus "stations"
-                    if (exists $json->{stations} && exists $json->{stations}->{snames}) {
-                        my $names = $json->{stations}->{snames};
-                        for (my $i = 0; $i < @$names; $i++) {
-                            readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
-                        }
-                    }
-                    
-                    # Ventilzustände (on/off) aus "status"
-                    if (exists $json->{status} && exists $json->{status}->{sn}) {
-                        my $stations = $json->{status}->{sn};
-                        for (my $i = 0; $i < @$stations; $i++) {
-                            readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
-                        }
-                    }
-                    
-                    readingsBulkUpdate($hash, "state", "connected");
-                    readingsEndUpdate($hash, 1);
-                }
+                $decoded = decode_json($data);
             };
             if ($@) {
-                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] JSON Parse Error: $@";
+                Log3 $name, 2, "OpenSprinkler ($name): JSON-Parsing fehlgeschlagen: $@";
+                readingsSingleUpdate($hash, "state", "json error", 1);
+                return;
             }
+
+            readingsBeginUpdate($hash);
+
+            # System Optionen verarbeiten
+            if (exists($decoded->{options})) {
+                my $opts = $decoded->{options};
+                readingsBulkUpdate($hash, "firmware_version", $opts->{fwv} // "unknown");
+                readingsBulkUpdate($hash, "hardware_version", $opts->{hwv} // "unknown");
+                readingsBulkUpdate($hash, "mac_address", $opts->{mac} // "unknown");
+                
+                # Dynamische Ermittlung der Stationen (8 Basis + 8 pro Erweiterungsboard)
+                my $nbrd = $opts->{nbrd} // 1;
+                $hash->{helper}{max_stations} = $nbrd * 8;
+                readingsBulkUpdate($hash, "station_boards", $nbrd);
+            }
+
+            # System Status & Werte verarbeiten
+            if (exists($decoded->{settings})) {
+                my $sets = $decoded->{settings};
+                readingsBulkUpdate($hash, "current_mA", $sets->{mcur} // 0);
+                readingsBulkUpdate($hash, "flow_total_clicks", $sets->{wcnt} // 0);
+                readingsBulkUpdate($hash, "water_level_percent", $sets->{wl} // 100);
+                
+                my $en = $sets->{en} // 0;
+                readingsBulkUpdate($hash, "system_enabled", $en ? "on" : "off");
+
+                my $rd = $sets->{rd} // 0;
+                if ($rd > 0) {
+                    my $rd_time = $sets->{rdst} // 0;
+                    my $rd_end = OpenSprinkler_SecToTime($rd_time);
+                    readingsBulkUpdate($hash, "rainDelay", "on");
+                    readingsBulkUpdate($hash, "rainDelay_until", $rd_end);
+                } else {
+                    readingsBulkUpdate($hash, "rainDelay", "off");
+                    readingsBulkUpdate($hash, "rainDelay_until", "none");
+                }
+
+                my $rs = $sets->{rs} // 0;
+                readingsBulkUpdate($hash, "rainSensor", $rs ? "rain" : "dry");
+
+                # Letzter Lauf (Last Run)
+                if (ref($sets->{lrun}) eq 'ARRAY' && scalar(@{$sets->{lrun}}) >= 4) {
+                    my ($sid, $pid, $dur, $et) = @{$sets->{lrun}};
+                    readingsBulkUpdate($hash, "last_run_station", $sid);
+                    readingsBulkUpdate($hash, "last_run_duration_sec", $dur);
+                }
+
+                # Dynamische Stations-Readings (Zustand & Name)
+                my $max_st = $hash->{helper}{max_stations} // 8;
+                
+                if (ref($sets->{sn}) eq 'ARRAY') {
+                    for (my $i = 0; $i < $max_st; $i++) {
+                        last if $i >= scalar(@{$sets->{sn}});
+                        readingsBulkUpdate($hash, "station_" . $i . "_name", $sets->{sn}[$i]);
+                    }
+                }
+
+                if (ref($sets->{sstat}) eq 'ARRAY') {
+                    for (my $i = 0; $i < $max_st; $i++) {
+                        last if $i >= scalar(@{$sets->{sstat}});
+                        my $status = $sets->{sstat}[$i] ? "on" : "off";
+                        readingsBulkUpdate($hash, "station_" . $i, $status);
+                    }
+                }
+            }
+
+            readingsBulkUpdate($hash, "state", "active");
+            readingsEndUpdate($hash, 1);
         }
     });
-
-    my $interval = int($attr{$name}{interval} // 60);
-    InternalTimer(time() + $interval, "OpenSprinkler_Poll", $hash);
 }
 
 # Hilfsfunktion zur Befehlsübertragung
