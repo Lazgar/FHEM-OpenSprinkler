@@ -24,13 +24,17 @@ sub OpenSprinkler_Define($$) {
 
     return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
 
-    # Parameter fest an das FHEM-Hash-Objekt binden
-    $hash->{NAME} = $a[0]; 
-    $hash->{IP}   = $a[2]; 
-    $hash->{PW}   = md5_hex($a[3]); 
+    # Sichere Zuordnung der Parameter aus der define-Zeile
+    my $dev_name = $a[0];
+    my $dev_ip   = $a[2];
+    my $dev_pw   = $a[3];
 
-    # Standard-Intervall für Status-Updates: 60 Sekunden vordefinieren
-    $attr{$a[0]}{interval} = 60 if (!defined($attr{$a[0]}{interval}));
+    # Werte permanent im Hash für den HTTP-Loop speichern
+    $hash->{NAME} = $dev_name;
+    $hash->{IP}   = $dev_ip;
+    $hash->{PW}   = md5_hex($dev_pw); 
+
+    $attr{$dev_name}{interval} = 60 if (!defined($attr{$dev_name}{interval}));
 
     RemoveInternalTimer($hash);
     OpenSprinkler_Poll($hash);
@@ -78,13 +82,13 @@ sub OpenSprinkler_Set($@) {
     my $usage = join(" ", @cmd_list);
     return $usage if (@a < 2);
     
-    my $cmd = $a[1];
+    my $cmd = $a[0];
     
     # 1. STATION STARTEN (set <name> station_X_start <Seconds>)
     if ($cmd =~ /^station_([0-7])_start$/) {
         my $sid = $1;
         return "Usage: set $name $cmd <seconds>" if (@a < 3);
-        my $sekunden = $a[2]; 
+        my $sekunden = $a[1]; # KORREKTUR: Liest das Argument korrekt aus dem zweiten Feld
         
         # Sichert den Sekunden-Sollwert im Reading
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
@@ -108,7 +112,7 @@ sub OpenSprinkler_Set($@) {
     # 3. GLOBALE REGEN-VERZÖGERUNG (set <name> rainDelay <Stunden>)
     elsif ($cmd eq "rainDelay") {
         return "Usage: set $name $cmd <hours>" if (@a < 3);
-        my $hours = $a[2];
+        my $hours = $a[1];
         my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&rd=$hours";
         OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
         return undef;
@@ -117,9 +121,9 @@ sub OpenSprinkler_Set($@) {
     # 4. SYSTEM-BETRIEB (set <name> system_enabled on|off)
     elsif ($cmd eq "system_enabled") {
         return "Usage: set $name $cmd on|off" if (@a < 3);
-        my $state = ($a[2] eq "on") ? 1 : 0;
+        my $state = ($a[1] eq "on") ? 1 : 0;
         my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&en=$state";
-        OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $a[2] gesetzt");
+        OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $a[1] gesetzt");
         return undef;
     }
 
@@ -128,7 +132,7 @@ sub OpenSprinkler_Set($@) {
 
 sub OpenSprinkler_Get($@) {
     my ($hash, @a) = @_;
-    return "Unknown argument $a[1], choose status" if ($a[1] ne "status");
+    return "Unknown argument $a[0], choose status" if ($a[0] ne "status");
     OpenSprinkler_Poll($hash);
     return "Status-Update getriggert.";
 }
@@ -190,11 +194,11 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "rain_delay_until", "none");
                     }
                     
-                    # KORREKTUR: lrun Array-Indizes [0] und [2] krisensicher gesetzt
+                    # Krisensichere Zuweisung der Array-Indizes für lrun
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
-                        my $last_sid = $lrun->[0]; # Index 0 = Stations-ID
-                        my $last_dur = $lrun->[2]; # Index 2 = Dauer in Sekunden
+                        my $last_sid = $lrun->[0]; 
+                        my $last_dur = $lrun->[2]; 
                         
                         if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
                             readingsBulkUpdate($hash, "station_" . $last_sid . "_lastRealDuration", $last_dur);
@@ -212,7 +216,6 @@ sub OpenSprinkler_Poll($) {
                     # Ventilzustände (on/off) aus "status"
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         my $stations = $json->{status}->{sn};
-                        # KORREKTUR: Abbruchbedingung nutzt nun korrekt @$stations statt dem unvollständigen Variable-Call
                         for (my $i = 0; $i < @$stations; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
                         }
