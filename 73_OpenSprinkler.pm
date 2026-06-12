@@ -165,26 +165,24 @@ sub OpenSprinkler_Poll($) {
                     readingsBeginUpdate($hash);
                     
                     # Globale Live-Hardware-Werte
-                    readingsBulkUpdate($hash, "flow_total_clicks", $s->{flcto}) if exists $s->{flcto};
                     readingsBulkUpdate($hash, "current_mA", $s->{curr}) if exists $s->{curr};
-                    readingsBulkUpdate($hash, "water_level_percent", $s->{wl}) if exists $s->{wl};
                     
                     # System-Informationen aus "options" parsen
                     if (exists $json->{options}) {
                         my $o = $json->{options};
                         readingsBulkUpdate($hash, "firmware_version", $o->{fwv}) if exists $o->{fwv};
-                        readingsBulkUpdate($hash, "hardware_mac", $o->{mac}) if exists $o->{mac};
-                        readingsBulkUpdate($hash, "extension_boards_count", $o->{npkg}) if exists $o->{npkg};
+                        readingsBulkUpdate($hash, "hardware_version", $o->{hwv}) if exists $o->{hwv};
+                        readingsBulkUpdate($hash, "extension_boards", $o->{ext}) if exists $o->{ext};
+                        readingsBulkUpdate($hash, "water_level_percent", $o->{wl}) if exists $o->{wl};
                         
-                        if (exists $o->{devtype}) {
-                            my %types = (1=>"OSPi (Raspberry)", 2=>"OpenSprinkler AC", 3=>"OpenSprinkler DC", 4=>"OpenSprinkler Lane");
+                        if (exists $o->{hwt}) {
+                            my %types = (1=>"OSPi (Raspberry)", 172=>"AC Power Version", 220=>"DC Power Verison", 26=>"Latch Version");
                             readingsBulkUpdate($hash, "hardware_type", $types{$o->{devtype}} // "Unknown ($o->{devtype})");
                         }
                     }
                     
                     # Sensoren und Verzögerungen
                     readingsBulkUpdate($hash, "system_enabled", $s->{en} ? "on" : "off") if exists $s->{en};
-                    readingsBulkUpdate($hash, "sensor_rain", $s->{rs} ? "rain" : "dry") if exists $s->{rs};
                     readingsBulkUpdate($hash, "rain_delay_active", $s->{rd} ? "on" : "off") if exists $s->{rd};
                     
                     if (exists $s->{rdst} && $s->{rdst} > 0) {
@@ -200,7 +198,7 @@ sub OpenSprinkler_Poll($) {
                         my $last_dur = $lrun->[2]; 
                         
                         if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
-                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastRealDuration", $last_dur);
+                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastDuration", $last_dur);
                         }
                     }
                     
@@ -218,8 +216,9 @@ sub OpenSprinkler_Poll($) {
                         for (my $i = 0; $i < @$stations; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
                         }
+                        readingsBulkUpdate($hash, "total_stations", $stations->{nstations}) if exists $stations->{nstations};
                     }
-                    
+
                     readingsBulkUpdate($hash, "state", "connected");
                     readingsEndUpdate($hash, 1);
                 }
