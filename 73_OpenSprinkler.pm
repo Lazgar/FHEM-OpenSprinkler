@@ -159,8 +159,8 @@ sub OpenSprinkler_Poll {
             # Start des Bulk-Updates mit Event-Generierung am Ende
             readingsBeginUpdate($hash);
 
-            # 1. System Optionen verarbeiten (wichtig für max_stations)
-            my $max_st = 8; # Lokaler Fallback
+            # 1. System Optionen verarbeiten
+            my $max_st = 8; 
             if (exists($decoded->{options})) {
                 my $opts = $decoded->{options};
                 readingsBulkUpdate($hash, "firmware_version", $opts->{fwv} // "unknown");
@@ -172,7 +172,6 @@ sub OpenSprinkler_Poll {
                 $hash->{helper}{max_stations} = $max_st;
                 readingsBulkUpdate($hash, "station_boards", $nbrd);
             } else {
-                # Falls options nicht mitgeliefert wurde, Helper oder Default nutzen
                 $max_st = $hash->{helper}{max_stations} // 8;
             }
 
@@ -207,26 +206,25 @@ sub OpenSprinkler_Poll {
                     readingsBulkUpdate($hash, "last_run_station", $sid);
                     readingsBulkUpdate($hash, "last_run_duration_sec", $dur);
                 }
+            }
 
-                # ROBUTE VERARBEITUNG: Stations-Namen (sn)
-                if (exists($sets->{sn}) && ref($sets->{sn}) eq 'ARRAY') {
-                    for (my $i = 0; $i < $max_st; $i++) {
-                        last if $i >= scalar(@{$sets->{sn}});
-                        readingsBulkUpdate($hash, "station_" . $i . "_name", $sets->{sn}[$i]);
-                    }
-                }
-
-                # ROBUSTE VERARBEITUNG: Stations-Status (sstat)
-                if (exists($sets->{sstat}) && ref($sets->{sstat}) eq 'ARRAY') {
-                    for (my $i = 0; $i < $max_st; $i++) {
-                        last if $i >= scalar(@{$sets->{sstat}});
-                        my $status = $sets->{sstat}[$i] ? "on" : "off";
-                        readingsBulkUpdate($hash, "station_" . $i, $status);
-                    }
+            # 3. KORREKTUR: Stations-Namen und Status liegen auf ROOT-Ebene des JSON
+            if (exists($decoded->{sn}) && ref($decoded->{sn}) eq 'ARRAY') {
+                for (my $i = 0; $i < $max_st; $i++) {
+                    last if $i >= scalar(@{$decoded->{sn}});
+                    readingsBulkUpdate($hash, "station_" . $i . "_name", $decoded->{sn}[$i]);
                 }
             }
 
-            # State setzen und die Updates ABSCHLIESSEN (1 = Events erlauben!)
+            if (exists($decoded->{sstat}) && ref($decoded->{sstat}) eq 'ARRAY') {
+                for (my $i = 0; $i < $max_st; $i++) {
+                    last if $i >= scalar(@{$decoded->{sstat}});
+                    my $status = $decoded->{sstat}[$i] ? "on" : "off";
+                    readingsBulkUpdate($hash, "station_" . $i . "_state", $status);
+                }
+            }
+
+            # State setzen und Updates abschließen (1 = Events erlauben!)
             readingsBulkUpdate($hash, "state", "active");
             readingsEndUpdate($hash, 1);
         }
