@@ -29,7 +29,8 @@ sub OpenSprinkler_Define($$) {
 
     $hash->{NAME} = $name;
     $hash->{IP}   = $ip;
-    $hash->{PW}   = md5_hex($pw); 
+    $hash->{PW}   = md5_hex($pw);
+    $hash->{helper}{max_stations} = 8;
 
     # Standard-Intervall für Status-Updates: 60 Sekunden vordefinieren
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
@@ -50,7 +51,11 @@ sub OpenSprinkler_Undefine($$) {
 sub OpenSprinkler_Set {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
-    my $cmd = $a[1]; # In FHEM-Set-Funktionen ist $a[1] der Befehl
+    
+    return "Unknown argument, choose one of ..." if (scalar(@a) < 2);
+    
+    my $cmd = $a[0]; # Der Befehl (z.B. station_0_start)
+    my $arg = $a[1]; # Das Argument (z.B. Zeitdauer)
 
     # Dynamische Befehlsliste generieren basierend auf erkannten Stations-Boards
     my $max_st = $hash->{helper}{max_stations} // 8;
@@ -59,25 +64,23 @@ sub OpenSprinkler_Set {
         push(@station_cmds, "station_${i}_start", "station_${i}_stop");
     }
     
-    # Kombiniert die Standard-Befehle mit den dynamischen Stations-Befehlen
     my $list = "rainDelay system_enabled:on,off " . join(" ", @station_cmds);
 
     return "Unknown argument $cmd, choose one of $list" if (!defined($cmd));
 
-    # Basis-URL für die API-Steuerung des OpenSprinklers
     my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW};
 
     if ($cmd eq "system_enabled") {
-        my $val = ($a[2] eq "on") ? 1 : 0;
+        my $val = ($arg eq "on") ? 1 : 0;
         $url .= "&en=$val";
     }
     elsif ($cmd eq "rainDelay") {
-        my $val = $a[2] // 0;
+        my $val = $arg // 0;
         $url .= "&rd=$val";
     }
     elsif ($cmd =~ /^station_(\d+)_start$/) {
         my $sid = $1;
-        my $dur = $a[2] // 60; # Nutzt 60 Sekunden als Standard, falls keine Zeit übergeben wurde
+        my $dur = $arg // 60; 
         $url .= "&sid=$sid&t=$dur";
     }
     elsif ($cmd =~ /^station_(\d+)_stop$/) {
@@ -88,7 +91,6 @@ sub OpenSprinkler_Set {
         return "Unknown argument $cmd, choose one of $list";
     }
 
-    # Befehl asynchron absetzen, damit FHEM während des Netzwerk-Requests nicht blockiert
     HttpUtils_NonblockingGet({
         url => $url,
         timeout => 5,
@@ -98,7 +100,6 @@ sub OpenSprinkler_Set {
             if ($err) {
                 Log3 $name, 3, "OpenSprinkler ($name): Set-Befehl fehlgeschlagen: $err";
             } else {
-                # Sofortiger Status-Poll, damit das FHEM-Frontend direkt aktualisiert wird
                 OpenSprinkler_Poll($hash);
             }
         }
@@ -181,16 +182,19 @@ sub OpenSprinkler_Poll {
                 my $en = $sets->{en} // 0;
                 readingsBulkUpdate($hash, "system_enabled", $en ? "on" : "off");
 
+                # KORREKTUR: Variable außerhalb des Blocks deklarieren
                 my $rd = $sets->{rd} // 0;
+                my $rd_end = "none";
+                
                 if ($rd > 0) {
                     my $rd_time = $sets->{rdst} // 0;
-                    my $rd_end = OpenSprinkler_SecToTime($rd_time);
+                    $rd_end = OpenSprinkler_SecToTime($rd_time);
                     readingsBulkUpdate($hash, "rainDelay", "on");
-                    readingsBulkUpdate($hash, "rainDelay_until", $rd_end);
                 } else {
                     readingsBulkUpdate($hash, "rainDelay", "off");
-                    readingsBulkUpdate($hash, "rainDelay_until", "none");
                 }
+                # Jetzt ist $rd_end hier fehlerfrei lesbar
+                readingsBulkUpdate($hash, "rainDelay_until", $rd_end);
 
                 my $rs = $sets->{rs} // 0;
                 readingsBulkUpdate($hash, "rainSensor", $rs ? "rain" : "dry");
