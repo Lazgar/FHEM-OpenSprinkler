@@ -24,10 +24,10 @@ sub OpenSprinkler_Define($$) {
 
     return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
 
-    # FESTE VERANKERUNG: Parameter direkt an das FHEM-Hash-Objekt binden!
-    $hash->{NAME} = $a[0]; # Der vom User gewählte Gerätename
-    $hash->{IP}   = $a[2]; # Die IP-Adresse der Hardware
-    $hash->{PW}   = md5_hex($a[3]); # MD5-Passworthash generieren
+    # Parameter fest an das FHEM-Hash-Objekt binden
+    $hash->{NAME} = $a[0]; 
+    $hash->{IP}   = $a[2]; 
+    $hash->{PW}   = md5_hex($a[3]); 
 
     # Standard-Intervall für Status-Updates: 60 Sekunden vordefinieren
     $attr{$a[0]}{interval} = 60 if (!defined($attr{$a[0]}{interval}));
@@ -190,7 +190,7 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "rain_delay_until", "none");
                     }
                     
-                    # NATIVE CODIERUNG: Indizes für lrun-Array fest fixiert!
+                    # KORREKTUR: lrun Array-Indizes [0] und [2] krisensicher gesetzt
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
                         my $last_sid = $lrun->[0]; # Index 0 = Stations-ID
@@ -212,7 +212,8 @@ sub OpenSprinkler_Poll($) {
                     # Ventilzustände (on/off) aus "status"
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         my $stations = $json->{status}->{sn};
-                        for (my $i = 0; $i < @$names; $i++) {
+                        # KORREKTUR: Abbruchbedingung nutzt nun korrekt @$stations statt dem unvollständigen Variable-Call
+                        for (my $i = 0; $i < @$stations; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
                         }
                     }
@@ -254,4 +255,13 @@ sub OpenSprinkler_SendCommand($$$) {
             
             eval {
                 my $res = decode_json($data);
-if (exists $res->{result} && $res->{result} == 1) {Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";OpenSprinkler_Poll($hash);}};}});}1;
+                if (exists $res->{result} && $res->{result} == 1) {
+                    Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";
+                    OpenSprinkler_Poll($hash);
+                }
+            };
+        }
+    });
+}
+
+1;
