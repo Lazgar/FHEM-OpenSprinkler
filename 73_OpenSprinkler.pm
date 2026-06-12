@@ -177,7 +177,7 @@ sub OpenSprinkler_Poll($) {
                         
                         if (exists $o->{hwt}) {
                             my %types = (1=>"OSPi (Raspberry)", 172=>"AC Power Version", 220=>"DC Power Verison", 26=>"Latch Version");
-                            readingsBulkUpdate($hash, "hardware_type", $types{$o->{devtype}} // "Unknown ($o->{devtype})");
+                            readingsBulkUpdate($hash, "hardware_type", $types{$o->{hwt}} // "Unknown ($o->{hwt})");
                         }
                     }
                     
