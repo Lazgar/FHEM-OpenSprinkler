@@ -23,7 +23,7 @@ sub OpenSprinkler_Define($$) {
 
     return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
 
-    my $name = $a[1];
+    my $name = $a[0];
     my $ip   = $a[2];
     my $pw   = $a[3];
 
