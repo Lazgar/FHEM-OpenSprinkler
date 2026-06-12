@@ -13,6 +13,7 @@ sub OpenSprinkler_Initialize($) {
     $hash->{UndefFn}  = "OpenSprinkler_Undefine";
     $hash->{SetFn}    = "OpenSprinkler_Set";
     $hash->{GetFn}    = "OpenSprinkler_Get";
+    $hash->{AttrFn}   = "OpenSprinkler_Attr"; 
     $hash->{AttrList} = "interval " . $readingFnAttributes;
 }
 
@@ -23,14 +24,14 @@ sub OpenSprinkler_Define($$) {
 
     return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
 
-    my $name = $a[0];
-    my $ip   = $a[2];
-    my $pw   = $a[3];
+    # KORREKTUR: Zuweisung der Parameter über die korrekten Array-Indizes
+    my $name = $a[0]; 
+    my $ip   = $a[2]; 
+    my $pw   = $a[3]; 
 
     $hash->{NAME} = $name;
     $hash->{IP}   = $ip;
-    $hash->{PW}   = md5_hex($pw);
-    $hash->{helper}{max_stations} = 8;
+    $hash->{PW}   = md5_hex($pw); 
 
     # Standard-Intervall für Status-Updates: 60 Sekunden vordefinieren
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
@@ -47,65 +48,84 @@ sub OpenSprinkler_Undefine($$) {
     return undef;
 }
 
+# Überwachung für Attributänderungen zur Laufzeit
+sub OpenSprinkler_Attr($$$$) {
+    my ($cmd, $name, $attrName, $attrVal) = @_;
+    my $hash = $defs{$name};
+
+    if ($attrName eq "interval" && defined($hash)) {
+        if ($cmd eq "set") {
+            RemoveInternalTimer($hash);
+            InternalTimer(time() + int($attrVal), \&OpenSprinkler_Poll, $hash);
+        } elsif ($cmd eq "del") {
+            RemoveInternalTimer($hash);
+            InternalTimer(time() + 60, \&OpenSprinkler_Poll, $hash);
+        }
+    }
+    return undef;
+}
+
 # Befehle verarbeiten (set ...)
-sub OpenSprinkler_Set {
+sub OpenSprinkler_Set($@) {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
     
-    return "Unknown argument, choose one of ..." if (scalar(@a) < 2);
+    my @cmd_list;
+    for (my $i = 0; $i < 8; $i++) {
+        push(@cmd_list, "station_" . $i . "_start:textField");
+        push(@cmd_list, "station_" . $i . "_stop:noArg");
+    }
+    push(@cmd_list, "rainDelay:textField");
+    push(@cmd_list, "system_enabled:on,off");
     
-    my $cmd = $a[0]; # Der Befehl (z.B. station_0_start)
-    my $arg = $a[1]; # Das Argument (z.B. Zeitdauer)
-
-    # Dynamische Befehlsliste generieren basierend auf erkannten Stations-Boards
-    my $max_st = $hash->{helper}{max_stations} // 8;
-    my @station_cmds;
-    for (my $i = 0; $i < $max_st; $i++) {
-        push(@station_cmds, "station_${i}_start", "station_${i}_stop");
+    my $usage = join(" ", @cmd_list);
+    return $usage if (@a < 2);
+    
+    my $cmd = $a[1];
+    
+    # 1. STATION STARTEN (set <name> station_X_start <Seconds>)
+    if ($cmd =~ /^station_([0-7])_start$/) {
+        my $sid = $1;
+        return "Usage: set $name $cmd <seconds>" if (@a < 3);
+        my $sekunden = $a[2]; 
+        
+        readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
+        
+        my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=1&t=$sekunden";
+        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.");
+        return undef;
     }
     
-    my $list = "rainDelay system_enabled:on,off " . join(" ", @station_cmds);
-
-    return "Unknown argument $cmd, choose one of $list" if (!defined($cmd));
-
-    my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW};
-
-    if ($cmd eq "system_enabled") {
-        my $val = ($arg eq "on") ? 1 : 0;
-        $url .= "&en=$val";
+    # 2. STATION STOPPEN (set <name> station_X_stop)
+    elsif ($cmd =~ /^station_([0-7])_stop$/) {
+        my $sid = $1;
+        
+        readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
+        
+        my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=0";
+        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestoppt.");
+        return undef;
     }
+    
+    # 3. GLOBALE REGEN-VERZÖGERUNG (set <name> rainDelay <Stunden>)
     elsif ($cmd eq "rainDelay") {
-        my $val = $arg // 0;
-        $url .= "&rd=$val";
+        return "Usage: set $name $cmd <hours>" if (@a < 3);
+        my $hours = $a[2];
+        my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&rd=$hours";
+        OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
+        return undef;
     }
-    elsif ($cmd =~ /^station_(\d+)_start$/) {
-        my $sid = $1;
-        my $dur = $arg // 60; 
-        $url .= "&sid=$sid&t=$dur";
-    }
-    elsif ($cmd =~ /^station_(\d+)_stop$/) {
-        my $sid = $1;
-        $url .= "&sid=$sid&t=0";
-    }
-    else {
-        return "Unknown argument $cmd, choose one of $list";
+    
+    # 4. SYSTEM-BETRIEB (set <name> system_enabled on|off)
+    elsif ($cmd eq "system_enabled") {
+        return "Usage: set $name $cmd on|off" if (@a < 3);
+        my $state = ($a[2] eq "on") ? 1 : 0;
+        my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&en=$state";
+        OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $a[2] gesetzt");
+        return undef;
     }
 
-    HttpUtils_NonblockingGet({
-        url => $url,
-        timeout => 5,
-        hash => $hash,
-        callback => sub {
-            my ($param, $err, $data) = @_;
-            if ($err) {
-                Log3 $name, 3, "OpenSprinkler ($name): Set-Befehl fehlgeschlagen: $err";
-            } else {
-                OpenSprinkler_Poll($hash);
-            }
-        }
-    });
-
-    return undef;
+    return $usage;
 }
 
 sub OpenSprinkler_Get($@) {
@@ -115,120 +135,105 @@ sub OpenSprinkler_Get($@) {
     return "Status-Update getriggert.";
 }
 
-sub OpenSprinkler_Poll {
+# Zyklischer Haupt-Datenabruf (Status-Poll über /ja)
+sub OpenSprinkler_Poll($) {
     my ($hash) = @_;
     my $name = $hash->{NAME};
-
-    # Timer für den nächsten Poll setzen
-    my $interval = AttrVal($name, "interval", 60);
-    RemoveInternalTimer($hash);
-    InternalTimer(time() + $interval, "OpenSprinkler_Poll", $hash, 0);
+    my $url = "http://$hash->{IP}/ja?pw=$hash->{PW}";
 
     HttpUtils_NonblockingGet({
-        url => "http://" . $hash->{IP} . "/ja?pw=" . $hash->{PW},
+        url     => $url,
         timeout => 5,
-        hash => $hash,
+        hash    => $hash,
         callback => sub {
             my ($param, $err, $data) = @_;
             my $hash = $param->{hash};
-            my $name = $hash->{NAME};
-
+            
             if ($err) {
-                Log3 $name, 3, "OpenSprinkler ($name): HTTP-Fehler beim Pollen: $err";
+                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] Fehler beim Polling: $err";
                 readingsSingleUpdate($hash, "state", "error", 1);
                 return;
             }
-
-            if (!$data) {
-                Log3 $name, 3, "OpenSprinkler ($name): Keine Daten empfangen.";
-                readingsSingleUpdate($hash, "state", "disconnected", 1);
-                return;
-            }
-
-            # ABSICHERUNG: eval verhindert den Absturz bei defektem/leerem JSON
-            my $decoded;
+            
             eval {
-                $decoded = decode_json($data);
+                my $json = decode_json($data);
+                
+                if (exists $json->{settings}) {
+                    my $s = $json->{settings};
+                    
+                    readingsBeginUpdate($hash);
+                    
+                    # Globale Live-Hardware-Werte
+                    readingsBulkUpdate($hash, "flow_total_clicks", $s->{flcto}) if exists $s->{flcto};
+                    readingsBulkUpdate($hash, "current_mA", $s->{curr}) if exists $s->{curr};
+                    readingsBulkUpdate($hash, "water_level_percent", $s->{wl}) if exists $s->{wl};
+                    
+                    # System-Informationen aus "options" parsen
+                    if (exists $json->{options}) {
+                        my $o = $json->{options};
+                        readingsBulkUpdate($hash, "firmware_version", $o->{fwv}) if exists $o->{fwv};
+                        readingsBulkUpdate($hash, "hardware_mac", $o->{mac}) if exists $o->{mac};
+                        readingsBulkUpdate($hash, "extension_boards_count", $o->{npkg}) if exists $o->{npkg};
+                        
+                        if (exists $o->{devtype}) {
+                            my %types = (1=>"OSPi (Raspberry)", 2=>"OpenSprinkler AC", 3=>"OpenSprinkler DC", 4=>"OpenSprinkler Lane");
+                            readingsBulkUpdate($hash, "hardware_type", $types{$o->{devtype}} // "Unknown ($o->{devtype})");
+                        }
+                    }
+                    
+                    # Sensoren und Verzögerungen
+                    readingsBulkUpdate($hash, "system_enabled", $s->{en} ? "on" : "off") if exists $s->{en};
+                    readingsBulkUpdate($hash, "sensor_rain", $s->{rs} ? "rain" : "dry") if exists $s->{rs};
+                    readingsBulkUpdate($hash, "rain_delay_active", $s->{rd} ? "on" : "off") if exists $s->{rd};
+                    
+                    if (exists $s->{rdst} && $s->{rdst} > 0) {
+                        readingsBulkUpdate($hash, "rain_delay_until", "".localtime($s->{rdst}));
+                    } else {
+                        readingsBulkUpdate($hash, "rain_delay_until", "none");
+                    }
+                    
+                    # KORREKTUR: Krisensichere Zuweisung der Array-Indizes für lrun
+                    if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
+                        my $lrun = $s->{lrun};
+                        my $last_sid = $lrun->[0]; 
+                        my $last_dur = $lrun->[2]; 
+                        
+                        if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
+                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastRealDuration", $last_dur);
+                        }
+                    }
+                    
+                    # Stationsnamen (snames) aus "stations"
+                    if (exists $json->{stations} && exists $json->{stations}->{snames}) {
+                        my $names = $json->{stations}->{snames};
+                        for (my $i = 0; $i < @$names; $i++) {
+                            readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
+                        }
+                    }
+                    
+                    # Ventilzustände (on/off) aus "status"
+                    if (exists $json->{status} && exists $json->{status}->{sn}) {
+                        my $stations = $json->{status}->{sn};
+                        for (my $i = 0; $i < @$stations; $i++) {
+                            readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
+                        }
+                    }
+                    
+                    readingsBulkUpdate($hash, "state", "connected");
+                    readingsEndUpdate($hash, 1);
+                }
             };
             if ($@) {
-                Log3 $name, 2, "OpenSprinkler ($name): JSON-Parsing fehlgeschlagen: $@";
-                readingsSingleUpdate($hash, "state", "json error", 1);
-                return;
+                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] JSON Parse Error: $@";
             }
-
-            # Start des Bulk-Updates mit Event-Generierung am Ende
-            readingsBeginUpdate($hash);
-
-            # 1. System Optionen verarbeiten
-            my $max_st = 8; 
-            if (exists($decoded->{options})) {
-                my $opts = $decoded->{options};
-                readingsBulkUpdate($hash, "firmware_version", $opts->{fwv} // "unknown");
-                readingsBulkUpdate($hash, "hardware_version", $opts->{hwv} // "unknown");
-                readingsBulkUpdate($hash, "mac_address", $opts->{mac} // "unknown");
-                
-                my $nbrd = $opts->{nbrd} // 1;
-                $max_st = $nbrd * 8;
-                $hash->{helper}{max_stations} = $max_st;
-                readingsBulkUpdate($hash, "station_boards", $nbrd);
-            } else {
-                $max_st = $hash->{helper}{max_stations} // 8;
-            }
-
-            # 2. System Status & Werte verarbeiten
-            if (exists($decoded->{settings})) {
-                my $sets = $decoded->{settings};
-                readingsBulkUpdate($hash, "current_mA", $sets->{mcur} // 0);
-                readingsBulkUpdate($hash, "flow_total_clicks", $sets->{wcnt} // 0);
-                readingsBulkUpdate($hash, "water_level_percent", $sets->{wl} // 100);
-                
-                my $en = $sets->{en} // 0;
-                readingsBulkUpdate($hash, "system_enabled", $en ? "on" : "off");
-
-                my $rd = $sets->{rd} // 0;
-                my $rd_end = "none";
-                
-                if ($rd > 0) {
-                    my $rd_time = $sets->{rdst} // 0;
-                    $rd_end = OpenSprinkler_SecToTime($rd_time);
-                    readingsBulkUpdate($hash, "rainDelay", "on");
-                } else {
-                    readingsBulkUpdate($hash, "rainDelay", "off");
-                }
-                readingsBulkUpdate($hash, "rainDelay_until", $rd_end);
-
-                my $rs = $sets->{rs} // 0;
-                readingsBulkUpdate($hash, "rainSensor", $rs ? "rain" : "dry");
-
-                # Letzter Lauf (Last Run)
-                if (exists($sets->{lrun}) && ref($sets->{lrun}) eq 'ARRAY' && scalar(@{$sets->{lrun}}) >= 4) {
-                    my ($sid, $pid, $dur, $et) = @{$sets->{lrun}};
-                    readingsBulkUpdate($hash, "last_run_station", $sid);
-                    readingsBulkUpdate($hash, "last_run_duration_sec", $dur);
-                }
-            }
-
-            # 3. KORREKTUR: Stations-Namen und Status liegen auf ROOT-Ebene des JSON
-            if (exists($decoded->{sn}) && ref($decoded->{sn}) eq 'ARRAY') {
-                for (my $i = 0; $i < $max_st; $i++) {
-                    last if $i >= scalar(@{$decoded->{sn}});
-                    readingsBulkUpdate($hash, "station_" . $i . "_name", $decoded->{sn}[$i]);
-                }
-            }
-
-            if (exists($decoded->{sstat}) && ref($decoded->{sstat}) eq 'ARRAY') {
-                for (my $i = 0; $i < $max_st; $i++) {
-                    last if $i >= scalar(@{$decoded->{sstat}});
-                    my $status = $decoded->{sstat}[$i] ? "on" : "off";
-                    readingsBulkUpdate($hash, "station_" . $i . "_state", $status);
-                }
-            }
-
-            # State setzen und Updates abschließen (1 = Events erlauben!)
-            readingsBulkUpdate($hash, "state", "active");
-            readingsEndUpdate($hash, 1);
         }
     });
+
+    my $interval = 60;
+    if (defined($attr{$name}) && defined($attr{$name}{interval})) {
+        $interval = int($attr{$name}{interval});
+    }
+    InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash);
 }
 
 # Hilfsfunktion zur Befehlsübertragung
@@ -253,10 +258,4 @@ sub OpenSprinkler_SendCommand($$$) {
                 if (exists $res->{result} && $res->{result} == 1) {
                     Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";
                     OpenSprinkler_Poll($hash);
-                }
-            };
-        }
-    });
-}
-
-1;
+}};}});}1;
