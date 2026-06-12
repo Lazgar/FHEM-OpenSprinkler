@@ -1,9 +1,9 @@
 ###############################################################################
-# $Id: 73_OpenSprinkler.pm 2026-06-12 12:15:00Z ModdedByAI $
+# $Id: 73_OpenSprinkler.pm 2026-06-12 12:30:00Z ModdedByAI $
 #
 # FHEM Modul zur Einbindung von OpenSprinkler
 # Überarbeitet für sichere Passwortspeicherung im FHEM-Keyring
-# Inklusive Echtzeit-Polls nach Schaltvorgängen und Passworteingabe
+# Inklusive Echtzeit-Polls nach Schaltvorgängen mit korrektem API-Syntax (en=1/0)
 #
 ###############################################################################
 
@@ -42,8 +42,8 @@ sub OpenSprinkler_Define($$) {
         return "Too few arguments. Usage: define <name> OpenSprinkler <IP-Adresse>";
     }
 
-    my $name = $a;
-    my $ip   = $a;
+    my $name = $a[0];
+    my $ip   = $a[2];
 
     $hash->{NAME} = $name;
     $hash->{IP}   = $ip;
@@ -76,15 +76,17 @@ sub OpenSprinkler_Undefine($$) {
 
 sub OpenSprinkler_Set($@) {
     my ($hash, @a) = @_;
-    my $name = $a;
-    my $cmd  = $a;
-    my $args = $a;
+    my $name = $a[0];
+    my $cmd  = $a[1];
+    my $args = $a[2];
 
     # Hilfetext für das FHEM-Frontend
-    my $help = "Unknown argument $cmd, choose one of password rainDelay system_enabled:on,off station_0_start station_0_stop station_1_start station_1_stop station_2_start station_2_stop station_3_start station_3_stop station_4_start station_4_stop station_5_start station_5_stop station_6_start station_6_stop station_7_start station_7_stop";
+    my $help = "Unknown argument " . ($cmd // "") . ", choose one of password rainDelay system_enabled:on,off station_0_start station_0_stop station_1_start station_1_stop station_2_start station_2_stop station_3_start station_3_stop station_4_start station_4_stop station_5_start station_5_stop station_6_start station_6_stop station_7_start station_7_stop";
 
     # Wenn FHEMWEB nur die Befehlsliste abfragt
-    return $help if (!defined($cmd) || $cmd eq "?");
+    if (!defined($cmd) || $cmd eq "?" || $cmd eq "") {
+        return $help;
+    }
 
     # 1. Passwort sicher setzen
     if ($cmd eq "password") {
@@ -103,9 +105,9 @@ sub OpenSprinkler_Set($@) {
         $hash->{PW} = md5_hex($args);
         Log3 $name, 3, "OpenSprinkler ($name): Passwort wurde im FHEM-Keyring gesichert.";
         
-        # ERWEITERUNG: Sofortigen Datenabruf nach Passworteingabe erzwingen
+        # Sofortigen Datenabruf nach Passworteingabe erzwingen
         RemoveInternalTimer($hash);
-        InternalTimer(time() + 0.1, "OpenSprinkler_Poll", $hash);
+        InternalTimer(time() + 1, "OpenSprinkler_Poll", $hash);
         
         return undef; 
     }
@@ -121,16 +123,19 @@ sub OpenSprinkler_Set($@) {
             return "Usage: set $name $cmd <seconds>";
         }
         my $station = $1;
-        my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW} . "&sid=" . $station . "&t=" . $args;
+        my $duration = $args; # Dauer lokal sichern für den asynchronen Callback
+        
+        # FIX: API benötigt &en=1 zum Einschalten und den MD5-Hash des Passworts ($hash->{PW})
+        my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW} . "&sid=" . $station . "&en=1&t=" . $duration;
+        
         HttpUtils_NonblockingGet({
             url     => $url,
             timeout => 5,
             hash    => $hash,
             callback=> sub { 
-                Log3 $name, 4, "OpenSprinkler ($name): Station $station gestartet ($args Sek).";
-                # ERWEITERUNG: Sofortiges Auslesen der neuen Zustände erzwingen
+                Log3 $name, 4, "OpenSprinkler ($name): Station $station gestartet ($duration Sek).";
                 RemoveInternalTimer($hash);
-                InternalTimer(time() + 0.5, "OpenSprinkler_Poll", $hash);
+                InternalTimer(time() + 1, "OpenSprinkler_Poll", $hash);
             }
         });
         return undef;
@@ -139,16 +144,18 @@ sub OpenSprinkler_Set($@) {
     # STATION STOPPEN
     elsif ($cmd =~ /^station_([0-7])_stop$/) {
         my $station = $1;
-        my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW} . "&sid=" . $station . "&t=0";
+        
+        # FIX: API benötigt &en=0 zum Ausschalten und den MD5-Hash des Passworts
+        my $url = "http://" . $hash->{IP} . "/cm?pw=" . $hash->{PW} . "&sid=" . $station . "&en=0";
+        
         HttpUtils_NonblockingGet({
             url     => $url,
             timeout => 5,
             hash    => $hash,
             callback=> sub { 
                 Log3 $name, 4, "OpenSprinkler ($name): Station $station manuell gestoppt.";
-                # ERWEITERUNG: Sofortiges Auslesen der neuen Zustände erzwingen
                 RemoveInternalTimer($hash);
-                InternalTimer(time() + 0.5, "OpenSprinkler_Poll", $hash);
+                InternalTimer(time() + 1, "OpenSprinkler_Poll", $hash);
             }
         });
         return undef;
@@ -165,10 +172,9 @@ sub OpenSprinkler_Set($@) {
             timeout => 5,
             hash    => $hash,
             callback=> sub { 
-                Log3 $name, 4, "OpenSprinkler ($name): Regen-Verzögerung auf $args Stunden gesetzt.";
-                # ERWEITERUNG: Sofortiges Auslesen der neuen Zustände erzwingen
+                Log3 $name, 4, "OpenSprinkler ($name): Regen-Verzögerung gesetzt.";
                 RemoveInternalTimer($hash);
-                InternalTimer(time() + 0.5, "OpenSprinkler_Poll", $hash);
+                InternalTimer(time() + 1, "OpenSprinkler_Poll", $hash);
             }
         });
         return undef;
@@ -186,10 +192,9 @@ sub OpenSprinkler_Set($@) {
             timeout => 5,
             hash    => $hash,
             callback=> sub { 
-                Log3 $name, 4, "OpenSprinkler ($name): System-Betrieb geändert auf $args.";
-                # ERWEITERUNG: Sofortiges Auslesen der neuen Zustände erzwingen
+                Log3 $name, 4, "OpenSprinkler ($name): System-Betrieb geändert.";
                 RemoveInternalTimer($hash);
-                InternalTimer(time() + 0.5, "OpenSprinkler_Poll", $hash);
+                InternalTimer(time() + 1, "OpenSprinkler_Poll", $hash);
             }
         });
         return undef;
@@ -267,5 +272,4 @@ sub OpenSprinkler_Poll($) {
     InternalTimer(time() + $interval, "OpenSprinkler_Poll", $hash);
     return undef;
 }
-
 1;
