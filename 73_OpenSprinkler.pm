@@ -24,17 +24,15 @@ sub OpenSprinkler_Define($$) {
 
     return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
 
-    # Sichere Zuordnung der Parameter aus der define-Zeile
+    # Feste Zuordnung der Parameter aus der define-Zeile
     my $dev_name = $a[0];
-    my $dev_ip   = $a[2];
-    my $dev_pw   = $a[3];
+    my $dev_ip   = $dev_name; # Fallback falls nötig, aber wir nutzen direkt $a[2]
+    
+    $hash->{NAME} = $a[0];
+    $hash->{IP}   = $a[2];
+    $hash->{PW}   = md5_hex($a[3]); 
 
-    # Werte permanent im Hash für den HTTP-Loop speichern
-    $hash->{NAME} = $dev_name;
-    $hash->{IP}   = $dev_ip;
-    $hash->{PW}   = md5_hex($dev_pw); 
-
-    $attr{$dev_name}{interval} = 60 if (!defined($attr{$dev_name}{interval}));
+    $attr{$a[0]}{interval} = 60 if (!defined($attr{$a[0]}{interval}));
 
     RemoveInternalTimer($hash);
     OpenSprinkler_Poll($hash);
@@ -82,13 +80,13 @@ sub OpenSprinkler_Set($@) {
     my $usage = join(" ", @cmd_list);
     return $usage if (@a < 2);
     
-    my $cmd = $a[0];
+    my $cmd = $a[1];
     
     # 1. STATION STARTEN (set <name> station_X_start <Seconds>)
     if ($cmd =~ /^station_([0-7])_start$/) {
         my $sid = $1;
         return "Usage: set $name $cmd <seconds>" if (@a < 3);
-        my $sekunden = $a[1]; # KORREKTUR: Liest das Argument korrekt aus dem zweiten Feld
+        my $sekunden = $a[2]; # KORREKTUR: Greift absolut sicher auf das 3. Element zu
         
         # Sichert den Sekunden-Sollwert im Reading
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
@@ -112,7 +110,7 @@ sub OpenSprinkler_Set($@) {
     # 3. GLOBALE REGEN-VERZÖGERUNG (set <name> rainDelay <Stunden>)
     elsif ($cmd eq "rainDelay") {
         return "Usage: set $name $cmd <hours>" if (@a < 3);
-        my $hours = $a[1];
+        my $hours = $a[2];
         my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&rd=$hours";
         OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
         return undef;
@@ -121,9 +119,10 @@ sub OpenSprinkler_Set($@) {
     # 4. SYSTEM-BETRIEB (set <name> system_enabled on|off)
     elsif ($cmd eq "system_enabled") {
         return "Usage: set $name $cmd on|off" if (@a < 3);
-        my $state = ($a[1] eq "on") ? 1 : 0;
+        my $val_state = $a[2];
+        my $state = ($val_state eq "on") ? 1 : 0;
         my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&en=$state";
-        OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $a[1] gesetzt");
+        OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $val_state gesetzt");
         return undef;
     }
 
@@ -132,7 +131,7 @@ sub OpenSprinkler_Set($@) {
 
 sub OpenSprinkler_Get($@) {
     my ($hash, @a) = @_;
-    return "Unknown argument $a[0], choose status" if ($a[0] ne "status");
+    return "Unknown argument $a[1], choose status" if ($a[1] ne "status");
     OpenSprinkler_Poll($hash);
     return "Status-Update getriggert.";
 }
@@ -194,7 +193,7 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "rain_delay_until", "none");
                     }
                     
-                    # Krisensichere Zuweisung der Array-Indizes für lrun
+                    # Array-Indizes für lrun krisensicher über Variablen ausgelesen
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
                         my $last_sid = $lrun->[0]; 
