@@ -115,7 +115,6 @@ sub OpenSprinkler_Get($@) {
     return "Status-Update getriggert.";
 }
 
-# Zyklischer Haupt-Datenabruf (Status-Poll über /ja)
 sub OpenSprinkler_Poll {
     my ($hash) = @_;
     my $name = $hash->{NAME};
@@ -157,22 +156,27 @@ sub OpenSprinkler_Poll {
                 return;
             }
 
+            # Start des Bulk-Updates mit Event-Generierung am Ende
             readingsBeginUpdate($hash);
 
-            # System Optionen verarbeiten
+            # 1. System Optionen verarbeiten (wichtig für max_stations)
+            my $max_st = 8; # Lokaler Fallback
             if (exists($decoded->{options})) {
                 my $opts = $decoded->{options};
                 readingsBulkUpdate($hash, "firmware_version", $opts->{fwv} // "unknown");
                 readingsBulkUpdate($hash, "hardware_version", $opts->{hwv} // "unknown");
                 readingsBulkUpdate($hash, "mac_address", $opts->{mac} // "unknown");
                 
-                # Dynamische Ermittlung der Stationen (8 Basis + 8 pro Erweiterungsboard)
                 my $nbrd = $opts->{nbrd} // 1;
-                $hash->{helper}{max_stations} = $nbrd * 8;
+                $max_st = $nbrd * 8;
+                $hash->{helper}{max_stations} = $max_st;
                 readingsBulkUpdate($hash, "station_boards", $nbrd);
+            } else {
+                # Falls options nicht mitgeliefert wurde, Helper oder Default nutzen
+                $max_st = $hash->{helper}{max_stations} // 8;
             }
 
-            # System Status & Werte verarbeiten
+            # 2. System Status & Werte verarbeiten
             if (exists($decoded->{settings})) {
                 my $sets = $decoded->{settings};
                 readingsBulkUpdate($hash, "current_mA", $sets->{mcur} // 0);
@@ -182,7 +186,6 @@ sub OpenSprinkler_Poll {
                 my $en = $sets->{en} // 0;
                 readingsBulkUpdate($hash, "system_enabled", $en ? "on" : "off");
 
-                # KORREKTUR: Variable außerhalb des Blocks deklarieren
                 my $rd = $sets->{rd} // 0;
                 my $rd_end = "none";
                 
@@ -193,30 +196,28 @@ sub OpenSprinkler_Poll {
                 } else {
                     readingsBulkUpdate($hash, "rainDelay", "off");
                 }
-                # Jetzt ist $rd_end hier fehlerfrei lesbar
                 readingsBulkUpdate($hash, "rainDelay_until", $rd_end);
 
                 my $rs = $sets->{rs} // 0;
                 readingsBulkUpdate($hash, "rainSensor", $rs ? "rain" : "dry");
 
                 # Letzter Lauf (Last Run)
-                if (ref($sets->{lrun}) eq 'ARRAY' && scalar(@{$sets->{lrun}}) >= 4) {
+                if (exists($sets->{lrun}) && ref($sets->{lrun}) eq 'ARRAY' && scalar(@{$sets->{lrun}}) >= 4) {
                     my ($sid, $pid, $dur, $et) = @{$sets->{lrun}};
                     readingsBulkUpdate($hash, "last_run_station", $sid);
                     readingsBulkUpdate($hash, "last_run_duration_sec", $dur);
                 }
 
-                # Dynamische Stations-Readings (Zustand & Name)
-                my $max_st = $hash->{helper}{max_stations} // 8;
-                
-                if (ref($sets->{sn}) eq 'ARRAY') {
+                # ROBUTE VERARBEITUNG: Stations-Namen (sn)
+                if (exists($sets->{sn}) && ref($sets->{sn}) eq 'ARRAY') {
                     for (my $i = 0; $i < $max_st; $i++) {
                         last if $i >= scalar(@{$sets->{sn}});
                         readingsBulkUpdate($hash, "station_" . $i . "_name", $sets->{sn}[$i]);
                     }
                 }
 
-                if (ref($sets->{sstat}) eq 'ARRAY') {
+                # ROBUSTE VERARBEITUNG: Stations-Status (sstat)
+                if (exists($sets->{sstat}) && ref($sets->{sstat}) eq 'ARRAY') {
                     for (my $i = 0; $i < $max_st; $i++) {
                         last if $i >= scalar(@{$sets->{sstat}});
                         my $status = $sets->{sstat}[$i] ? "on" : "off";
@@ -225,6 +226,7 @@ sub OpenSprinkler_Poll {
                 }
             }
 
+            # State setzen und die Updates ABSCHLIESSEN (1 = Events erlauben!)
             readingsBulkUpdate($hash, "state", "active");
             readingsEndUpdate($hash, 1);
         }
