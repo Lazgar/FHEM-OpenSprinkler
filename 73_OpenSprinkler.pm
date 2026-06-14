@@ -240,7 +240,8 @@ sub OpenSprinkler_Poll($) {
     if (defined($attr{$name}) && defined($attr{$name}{interval})) {
         $interval = int($attr{$name}{interval});
     }
-    InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash);
+    RemoveInternalTimer($hash);
+    InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
 }
 
 # Hilfsfunktion zur Befehlsübertragung
