@@ -14,7 +14,7 @@ sub OpenSprinkler_Initialize($) {
     $hash->{SetFn}    = "OpenSprinkler_Set";
     $hash->{GetFn}    = "OpenSprinkler_Get";
     $hash->{AttrFn}   = "OpenSprinkler_Attr"; 
-    $hash->{AttrList} = "interval " . $readingFnAttributes;
+    $hash->{AttrList} = "interval active_stations" . $readingFnAttributes;
 }
 
 # Definition: define <name> OpenSprinkler <IP-Adresse>
@@ -62,6 +62,11 @@ sub OpenSprinkler_Undefine($$) {
 sub OpenSprinkler_Attr($$$$) {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
+
+    if ($cmd eq "helper" && $attrName eq "active_stations") {
+        # Gibt eine kommagetrennte Liste für die Checkboxen zurück
+        return "multiple,station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
+    }
 
     if ($attrName eq "interval" && defined($hash) && defined($hash->{helper}{PW})) {
         if ($cmd eq "set") {
@@ -255,12 +260,17 @@ sub OpenSprinkler_Poll($) {
                     
                     readingsEndUpdate($hash, 1);
 
+                    my $active_attr = AttrVal($name, "active_stations", "station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7");
+                    my %active_stations = map { $_ => 1 } split(",", $active_attr);
+                    
                     # BLOCK 2: Stationsnamen (snames) aus "stations"
                     if (exists $json->{stations} && exists $json->{stations}->{snames}) {
                         readingsBeginUpdate($hash);
                         my $names = $json->{stations}->{snames};
                         for (my $i = 0; $i < @$names; $i++) {
-                            readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
+                            if (exists $active_stations{"station_".$i}) {
+                                readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
+                            }
                         }
                         readingsEndUpdate($hash, 1);
                     }
@@ -270,7 +280,9 @@ sub OpenSprinkler_Poll($) {
                         readingsBeginUpdate($hash);
                         my $stations = $json->{status}->{sn};
                         for (my $i = 0; $i < @$stations; $i++) {
-                            readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
+                            if (exists $active_stations{"station_".$i}) {
+                                readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
+                            }
                         }
 
                         my $nstations = $json->{status};
