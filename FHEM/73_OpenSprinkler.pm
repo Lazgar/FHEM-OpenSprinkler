@@ -31,9 +31,10 @@ sub OpenSprinkler_Define($$) {
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
 
     # 1. VERSUCH: Passwort aus dem FHEM-Keyring laden
+    # Passwort beim Start verschleiert aus der FHEM-KeyDB laden
     my $pw_loaded = 0;
-    if (main->can('fhem_Keyring_get')) {
-        my $pw = fhem_Keyring_get($name, "password");
+    if (defined(&keydb_read)) {
+        my $pw = keydb_read($name, "password");
         if ($pw) {
             $hash->{PW} = md5_hex($pw);
             $pw_loaded = 1;
@@ -98,18 +99,18 @@ sub OpenSprinkler_Set($@) {
         return "Usage: set $name password <your_password>" if (@a < 3);
         my $raw_pw = $a[2];
         
-        if (main->can('fhem_Keyring_store')) {
-            fhem_Keyring_store($name, "password", $raw_pw);
+        if (defined(&keydb_write)) {
+            keydb_write($name, "password", $raw_pw);
             $hash->{PW} = md5_hex($raw_pw);
-            Log3 $name, 3, "OpenSprinkler ($name) - Passwort im Keyring gespeichert. Starte Datenabruf...";
+            Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich in der FHEM-KeyDB hinterlegt.";
             
-            # Sofortiges Polling triggern, da nun das Passwort vorliegt!
+            # Sofortiges Polling starten
             RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
             OpenSprinkler_Poll($hash);
             
-            return "Passwort erfolgreich verschlüsselt gespeichert und Polling gestartet.";
+            return "Passwort erfolgreich verschleiert gespeichert und Polling gestartet.";
         } else {
-            return "Fehler: FHEM Keyring-Schnittstelle nicht verfügbar.";
+            return "Fehler: FHEM KeyDB-Schnittstelle nicht verfügbar.";
         }
     }
     
