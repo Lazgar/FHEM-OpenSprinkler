@@ -30,11 +30,10 @@ sub OpenSprinkler_Define($$) {
 
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
 
-    # 1. VERSUCH: Passwort aus dem FHEM-Keyring laden
-    # Passwort beim Start verschleiert aus der FHEM-KeyDB laden
+    # DER MODERNSTE WEG: Abruf aus dem FHEM-Core-Keyring (Achte auf Großschreibung!)
     my $pw_loaded = 0;
-    if (defined(&keydb_read)) {
-        my $pw = keydb_read($name, "password");
+    if (main->can('fhem_Keyring_Get')) {
+        my $pw = fhem_Keyring_Get($name, "password");
         if ($pw) {
             $hash->{PW} = md5_hex($pw);
             $pw_loaded = 1;
@@ -43,11 +42,11 @@ sub OpenSprinkler_Define($$) {
 
     RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
 
-    # 2. ENTSCHEIDUNG: Nur pollen, wenn ein Passwort existiert!
+    # Polling nur starten, wenn das Passwort im Keyring existiert
     if ($pw_loaded) {
         OpenSprinkler_Poll($hash);
     } else {
-        Log3 $name, 3, "OpenSprinkler ($name) - Gerät angelegt. Bitte setze das Passwort mit: set $name password <pw>";
+        Log3 $name, 3, "OpenSprinkler ($name) - Gerät initialisiert. Bitte setze das Passwort mit: set $name password <pw>";
         readingsSingleUpdate($hash, "state", "missing_password", 1);
     }
 
@@ -81,7 +80,39 @@ sub OpenSprinkler_Set($@) {
     my $name = $hash->{NAME};
     
     my @cmd_list;
-    push(@cmd_list, "password:textField"); 
+    
+    # 1. DYNAMISCHES MENÜ: Wenn kein Passwort im Speicher ist, NUR "password" anbieten!
+    if (!defined($hash->{PW})) {
+        push(@cmd_list, "password:password");
+        my $usage = join(" ", @cmd_list);
+        return $usage if (@a < 2);
+        
+        my $cmd = $a[1];
+        if ($cmd eq "password") {
+            return "Usage: set $name password <your_password>" if (@a < 3);
+            my $raw_pw = $a[2];
+            
+            # Speichern im modernen FHEM-Keyring (Verschlüsselt im FHEM-Ordner credentials/)
+            if (main->can('fhem_Keyring_Store')) {
+                fhem_Keyring_Store($name, "password", $raw_pw);
+                $hash->{PW} = md5_hex($raw_pw);
+                Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich im FHEM-Keyring hinterlegt.";
+                
+                # Polling direkt anwerfen
+                RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+                OpenSprinkler_Poll($hash);
+                
+                # Zwingt den Browser zu einem Reload, damit alle Befehle aufklappen!
+                return "async:FW_locationReload()";
+            } else {
+                return "Unknown argument $cmd. FHEM Keyring-Schnittstelle im Core nicht erreichbar.";
+            }
+        }
+        return "async:FW_msg('Bitte setze zuerst das Passwort mit: set $name password <pw>')";
+    }
+    
+    # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
+    push(@cmd_list, "password:password"); 
     for (my $i = 0; $i < 8; $i++) {
         push(@cmd_list, "station_" . $i . "_start:textField");
         push(@cmd_list, "station_" . $i . "_stop:noArg");
@@ -94,29 +125,15 @@ sub OpenSprinkler_Set($@) {
     
     my $cmd = $a[1];
     
-    # PASSWORT SEKTION (Immer erlaubt)
+    # Passwort-Änderung im laufenden Betrieb
     if ($cmd eq "password") {
         return "Usage: set $name password <your_password>" if (@a < 3);
         my $raw_pw = $a[2];
-        
-        if (defined(&keydb_write)) {
-            keydb_write($name, "password", $raw_pw);
+        if (main->can('fhem_Keyring_Store')) {
+            fhem_Keyring_Store($name, "password", $raw_pw);
             $hash->{PW} = md5_hex($raw_pw);
-            Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich in der FHEM-KeyDB hinterlegt.";
-            
-            # Sofortiges Polling starten
-            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
-            OpenSprinkler_Poll($hash);
-            
-            return "Passwort erfolgreich verschleiert gespeichert und Polling gestartet.";
-        } else {
-            return "Fehler: FHEM KeyDB-Schnittstelle nicht verfügbar.";
+            return "Passwort im Keyring aktualisiert.";
         }
-    }
-    
-    # SPERRE FÜR ALLE ANDEREN BEFEHLE, FALLS PW FEHLT
-    if (!defined($hash->{PW})) {
-        Log3 $name, 3, "OpenSprinkler ($name) - Befehl $cmd blockiert: Kein Passwort gesetzt.";
     }
     
     if ($cmd =~ /^station_([0-7])_start$/) {
