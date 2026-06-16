@@ -14,7 +14,8 @@ sub OpenSprinkler_Initialize($) {
     $hash->{SetFn}    = "OpenSprinkler_Set";
     $hash->{GetFn}    = "OpenSprinkler_Get";
     $hash->{AttrFn}   = "OpenSprinkler_Attr"; 
-    $hash->{AttrList} = "interval active_stations " . $readingFnAttributes;
+    # Sicher mit Leerzeichen getrennt, um Autovervollständigungs-Fehler zu vermeiden
+    $hash->{AttrList} = "interval active_stations " . " " . $readingFnAttributes;
 }
 
 # Definition: define <name> OpenSprinkler <IP-Adresse>
@@ -30,7 +31,7 @@ sub OpenSprinkler_Define($$) {
 
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
 
-    # DER ECHTE MODERNSTE WEG: Abruf aus dem FHEM-KeyValue-Speicher
+    # Abruf aus dem sicheren FHEM-KeyValue-Speicher
     my $pw_loaded = 0;
     if (defined(&getKeyValue)) {
         my $pw = getKeyValue($name . "_password");
@@ -63,9 +64,11 @@ sub OpenSprinkler_Attr($$$$) {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
 
-    if ($cmd eq "set" && $attrName eq "active_stations") {
-        # Gibt eine kommagetrennte Liste für die Checkboxen zurück
-        return "multiple-strict,station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
+    # Generiert das Häkchen-Menü mit deinen Wünschen: station_0 bis station_7
+    if ($attrName eq "active_stations") {
+        if ($cmd eq "set" && (!defined($attrVal) || $attrVal eq "" || $attrVal eq "?")) {
+            return "multiple,station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
+        }
     }
 
     if ($attrName eq "interval" && defined($hash) && defined($hash->{helper}{PW})) {
@@ -97,7 +100,6 @@ sub OpenSprinkler_Set($@) {
             return "Usage: set $name password <your_password>" if (@a < 3);
             my $raw_pw = $a[2];
             
-            # Speichern im offiziellen FHEM-Secure-Speicher
             if (defined(&setKeyValue)) {
                 setKeyValue($name . "_password", $raw_pw);
                 $hash->{helper}{PW} = md5_hex($raw_pw);
@@ -106,12 +108,13 @@ sub OpenSprinkler_Set($@) {
                 RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
                 OpenSprinkler_Poll($hash);
                 
-                # Zwingt den Browser zu einem Reload, damit alle Befehle aufklappen!
                 FW_locationReload();
+                return undef;
             } else {
                 return "async:FW_msg('FHEM setKeyValue-Schnittstelle im Core nicht erreichbar.')";
             }
         }
+        return "async:FW_msg('Bitte setze zuerst das Passwort mit: set $name password <pw>')";
     }
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
@@ -136,6 +139,7 @@ sub OpenSprinkler_Set($@) {
             setKeyValue($name . "_password", $raw_pw);
             $hash->{helper}{PW} = md5_hex($raw_pw);
             FW_locationReload();
+            return undef;
         }
     }
     
@@ -208,9 +212,10 @@ sub OpenSprinkler_Poll($) {
         callback => sub {
             my ($param, $err, $data) = @_;
             my $hash = $param->{hash};
+            my $pname = $hash->{NAME};
             
             if ($err) {
-                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] Fehler beim Polling: $err";
+                Log3 $pname, 3, "OpenSprinkler [$pname] Fehler beim Polling: $err";
                 readingsSingleUpdate($hash, "state", "error", 1);
                 return;
             }
@@ -248,71 +253,83 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "rain_delay_until", "none");
                     }
                     
+                    # AUSWERTUNG AKTIVE STATIONEN (Matched jetzt exakt auf station_X):
+                    my $active_attr = AttrVal($pname, "active_stations", "station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7");
+                    my %active_stations = map { $_ => 1 } split(",", $active_attr);
+                    
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
-                        my $last_sid = $lrun->[0]; 
-                        my $last_dur = $lrun->[2]; 
+                        my $last_sid = $lrun->[0];
+                        my $last_dur = $lrun->;
                         
                         if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
-                            readingsBulkUpdate($hash, "station_" . $last_sid . "_lastDuration", $last_dur);
+                            if (exists $active_stations{"station__".$last_sid}) {
+                                readingsBulkUpdate($hash, "station_" . $last_sid . "_lastDuration", $last_dur);
+                            }
                         }
                     }
                     
                     readingsEndUpdate($hash, 1);
-
-                    my $active_attr = AttrVal($name, "active_stations", "station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7");
-                    my %active_stations = map { $_ => 1 } split(",", $active_attr);
-                    
                     # BLOCK 2: Stationsnamen (snames) aus "stations"
                     if (exists $json->{stations} && exists $json->{stations}->{snames}) {
                         readingsBeginUpdate($hash);
                         my $names = $json->{stations}->{snames};
+                        
                         for (my $i = 0; $i < @$names; $i++) {
                             if (exists $active_stations{"station_".$i}) {
                                 readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
                             }
                         }
+                    
                         readingsEndUpdate($hash, 1);
                     }
-
                     # BLOCK 3: Ventilzustände (on/off) aus "status"
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         readingsBeginUpdate($hash);
                         my $stations = $json->{status}->{sn};
+                            
                         for (my $i = 0; $i < @$stations; $i++) {
                             if (exists $active_stations{"station_".$i}) {
                                 readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
                             }
                         }
-
                         my $nstations = $json->{status};
-                        readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
-                        
+                        readingsBulkUpdate($hash, "nstations", $nstations->{nstations}) if exists $nstations->{nstations};
                         readingsBulkUpdate($hash, "state", "connected");
                         readingsEndUpdate($hash, 1);
                     }
+                        
+                    # BLOCK 4: AUTOMATISCHE BEREINIGUNG
+                    for (my $i = 0; $i < 8; $i++) {
+                    
+                        if (!exists $active_stations{"station_".$i}) {
+                            fhemDeleteReading($hash, "station_".$i."name");
+                            fhemDeleteReading($hash, "station".$i."state");
+                            fhemDeleteReading($hash, "station".$i."duration");
+                            fhemDeleteReading($hash, "station".$i."_lastDuration");
+                        }
+                    }
                 }
             };
+                
             if ($@) {
                 Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] JSON Parse Error: $@";
             }
         }
     });
-
     # Neuen Timer für die nächste Runde anmelden
     my $interval = 60;
+    
     if (defined($attr{$name}) && defined($attr{$name}{interval})) {
         $interval = int($attr{$name}{interval});
     }
-    
-    RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
-    InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
+    RemoveInternalTimer($hash, &OpenSprinkler_Poll);
+    InternalTimer(time() + $interval, &OpenSprinkler_Poll, $hash, 0);
 }
-
-# Hilfsfunktion zur Befehlsübertragung
+        
+#Hilfsfunktion zur Befehlsübertragung
 sub OpenSprinkler_SendCommand($$$) {
     my ($hash, $url, $logMsg) = @_;
-    
     HttpUtils_NonblockingGet({
         url     => $url,
         timeout => 5,
@@ -320,21 +337,17 @@ sub OpenSprinkler_SendCommand($$$) {
         callback => sub {
             my ($param, $err, $data) = @_;
             my $hash = $param->{hash};
-            
             if ($err) {
                 Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] Befehl fehlgeschlagen: $err";
                 return;
-            }
-            
-            eval {
+            } eval {
                 my $res = decode_json($data);
                 if (exists $res->{result} && $res->{result} == 1) {
                     Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";
                     OpenSprinkler_Poll($hash);
                 }
             };
-        }
+         }
     });
 }
-
 1;
