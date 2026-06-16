@@ -260,7 +260,7 @@ sub OpenSprinkler_Poll($) {
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
                         my $last_sid = $lrun->[0];
-                        my $last_dur = $lrun->;
+                        my $last_dur = $lrun->[2];
                         
                         if (defined $last_sid && $last_sid >= 0 && $last_sid < 8) {
                             if (exists $active_stations{"station__".$last_sid}) {
