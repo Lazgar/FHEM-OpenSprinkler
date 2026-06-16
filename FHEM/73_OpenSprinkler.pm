@@ -107,7 +107,7 @@ sub OpenSprinkler_Set($@) {
                 return "async:FW_msg('FHEM Keyring-Schnittstelle im Core nicht erreichbar.')";
             }
         }
-        return undef;
+
     }
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
