@@ -108,7 +108,7 @@ sub OpenSprinkler_Set($@) {
                 return "Unknown argument $cmd. FHEM Keyring-Schnittstelle im Core nicht erreichbar.";
             }
         }
-        return "async:FW_msg('Bitte setze zuerst das Passwort mit: set $name password <pw>')";
+        Log3 $name, 3, "OpenSprinkler ($name) - Befehl $cmd blockiert: Kein Passwort gesetzt.";
     }
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
