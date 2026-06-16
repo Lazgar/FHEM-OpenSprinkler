@@ -115,7 +115,7 @@ sub OpenSprinkler_Set($@) {
     
     # SPERRE FÜR ALLE ANDEREN BEFEHLE, FALLS PW FEHLT
     if (!defined($hash->{PW})) {
-        return "Fehler: Befehl blockiert. Bitte setze zuerst das Passwort mit 'set $name password <pw>'";
+        Log3 $name, 3, "OpenSprinkler ($name) - Befehl $cmd blockiert: Kein Passwort gesetzt.";
     }
     
     if ($cmd =~ /^station_([0-7])_start$/) {
