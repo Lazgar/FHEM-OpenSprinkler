@@ -102,12 +102,11 @@ sub OpenSprinkler_Set($@) {
                 OpenSprinkler_Poll($hash);
                 
                 # Zwingt den Browser zu einem Reload, damit alle Befehle aufklappen!
-                return "async:FW_locationReload()";
+                FW_locationReload();
             } else {
                 return "async:FW_msg('FHEM setKeyValue-Schnittstelle im Core nicht erreichbar.')";
             }
         }
-        return "async:FW_msg('Bitte setze zuerst das Passwort mit: set $name password <pw>')";
     }
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
@@ -131,7 +130,7 @@ sub OpenSprinkler_Set($@) {
         if (defined(&setKeyValue)) {
             setKeyValue($name . "_password", $raw_pw);
             $hash->{PW} = md5_hex($raw_pw);
-            return "Passwort aktualisiert.";
+            FW_locationReload();
         }
     }
     
