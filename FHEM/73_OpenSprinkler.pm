@@ -83,7 +83,7 @@ sub OpenSprinkler_Set($@) {
     
     # 1. DYNAMISCHES MENÜ: Wenn kein Passwort im Speicher ist, NUR "password" anbieten!
     if (!defined($hash->{PW})) {
-        push(@cmd_list, "password:password");
+        push(@cmd_list, "password:textField");
         my $usage = join(" ", @cmd_list);
         return $usage if (@a < 2);
         
