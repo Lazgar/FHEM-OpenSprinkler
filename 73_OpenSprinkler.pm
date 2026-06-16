@@ -17,59 +17,70 @@ sub OpenSprinkler_Initialize($) {
     $hash->{AttrList} = "interval " . $readingFnAttributes;
 }
 
-# Definition: define <name> OpenSprinkler <IP-Adresse> <Passwort>
+# Definition: define <name> OpenSprinkler <IP-Adresse>
 sub OpenSprinkler_Define($$) {
     my ($hash, $def) = @_;
     my @a = split("[ \t]+", $def);
 
-    return "Usage: define <name> OpenSprinkler <IP> <Password>" if (@a < 4);
+    return "Usage: define <name> OpenSprinkler <IP>" if (@a < 3);
 
-    # Feste Zuordnung der Parameter aus der define-Zeile
-    my $dev_name = $a[0];
-    my $dev_ip   = $dev_name; # Fallback falls nötig, aber wir nutzen direkt $a[2]
-    
-    $hash->{NAME} = $a[0];
+    my $name = $a[0];
+    $hash->{NAME} = $name;
     $hash->{IP}   = $a[2];
-    $hash->{PW}   = md5_hex($a[3]); 
 
-    $attr{$a[0]}{interval} = 60 if (!defined($attr{$a[0]}{interval}));
+    $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
 
-    RemoveInternalTimer($hash);
-    OpenSprinkler_Poll($hash);
+    # 1. VERSUCH: Passwort aus dem FHEM-Keyring laden
+    my $pw_loaded = 0;
+    if (main->can('fhem_Keyring_get')) {
+        my $pw = fhem_Keyring_get($name, "password");
+        if ($pw) {
+            $hash->{PW} = md5_hex($pw);
+            $pw_loaded = 1;
+        }
+    }
+
+    RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+
+    # 2. ENTSCHEIDUNG: Nur pollen, wenn ein Passwort existiert!
+    if ($pw_loaded) {
+        OpenSprinkler_Poll($hash);
+    } else {
+        Log3 $name, 3, "OpenSprinkler ($name) - Gerät angelegt. Bitte setze das Passwort mit: set $name password <pw>";
+        readingsSingleUpdate($hash, "state", "missing_password", 1);
+    }
 
     return undef;
 }
 
 sub OpenSprinkler_Undefine($$) {
     my ($hash, $arg) = @_;
-    RemoveInternalTimer($hash);
+    RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
     return undef;
 }
 
-# Überwachung für Attributänderungen zur Laufzeit
 sub OpenSprinkler_Attr($$$$) {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
 
-    if ($attrName eq "interval" && defined($hash)) {
+    if ($attrName eq "interval" && defined($hash) && defined($hash->{PW})) {
         if ($cmd eq "set") {
-            RemoveInternalTimer($hash);
-            InternalTimer(time() + int($attrVal), \&OpenSprinkler_Poll, $hash);
+            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+            InternalTimer(time() + int($attrVal), \&OpenSprinkler_Poll, $hash, 0);
         } elsif ($cmd eq "del") {
-            RemoveInternalTimer($hash);
-            InternalTimer(time() + 60, \&OpenSprinkler_Poll, $hash);
+            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+            InternalTimer(time() + 60, \&OpenSprinkler_Poll, $hash, 0);
         }
     }
     return undef;
 }
 
-# Befehle verarbeiten (set ...)
 sub OpenSprinkler_Set($@) {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
     
-    # Befehlsstruktur für das FHEM-Frontend generieren (8 Stationen)
     my @cmd_list;
+    push(@cmd_list, "password:password"); 
     for (my $i = 0; $i < 8; $i++) {
         push(@cmd_list, "station_" . $i . "_start:textField");
         push(@cmd_list, "station_" . $i . "_stop:noArg");
@@ -82,32 +93,49 @@ sub OpenSprinkler_Set($@) {
     
     my $cmd = $a[1];
     
-    # 1. STATION STARTEN (set <name> station_X_start <Seconds>)
+    # PASSWORT SEKTION (Immer erlaubt)
+    if ($cmd eq "password") {
+        return "Usage: set $name password <your_password>" if (@a < 3);
+        my $raw_pw = $a[2];
+        
+        if (main->can('fhem_Keyring_store')) {
+            fhem_Keyring_store($name, "password", $raw_pw);
+            $hash->{PW} = md5_hex($raw_pw);
+            Log3 $name, 3, "OpenSprinkler ($name) - Passwort im Keyring gespeichert. Starte Datenabruf...";
+            
+            # Sofortiges Polling triggern, da nun das Passwort vorliegt!
+            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+            OpenSprinkler_Poll($hash);
+            
+            return "Passwort erfolgreich verschlüsselt gespeichert und Polling gestartet.";
+        } else {
+            return "Fehler: FHEM Keyring-Schnittstelle nicht verfügbar.";
+        }
+    }
+    
+    # SPERRE FÜR ALLE ANDEREN BEFEHLE, FALLS PW FEHLT
+    if (!defined($hash->{PW})) {
+        return "Fehler: Befehl blockiert. Bitte setze zuerst das Passwort mit 'set $name password <pw>'";
+    }
+    
     if ($cmd =~ /^station_([0-7])_start$/) {
         my $sid = $1;
         return "Usage: set $name $cmd <seconds>" if (@a < 3);
-        my $sekunden = $a[2]; # KORREKTUR: Greift absolut sicher auf das 3. Element zu
+        my $sekunden = $a[2];
         
-        # Sichert den Sekunden-Sollwert im Reading
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
         
         my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=1&t=$sekunden";
         OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.");
         return undef;
     }
-    
-    # 2. STATION STOPPEN (set <name> station_X_stop)
     elsif ($cmd =~ /^station_([0-7])_stop$/) {
         my $sid = $1;
-        
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
-        
         my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=0";
         OpenSprinkler_SendCommand($hash, $url, "Station $sid gestoppt.");
         return undef;
     }
-    
-    # 3. GLOBALE REGEN-VERZÖGERUNG (set <name> rainDelay <Stunden>)
     elsif ($cmd eq "rainDelay") {
         return "Usage: set $name $cmd <hours>" if (@a < 3);
         my $hours = $a[2];
@@ -115,8 +143,6 @@ sub OpenSprinkler_Set($@) {
         OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
         return undef;
     }
-    
-    # 4. SYSTEM-BETRIEB (set <name> system_enabled on|off)
     elsif ($cmd eq "system_enabled") {
         return "Usage: set $name $cmd on|off" if (@a < 3);
         my $val_state = $a[2];
@@ -132,6 +158,11 @@ sub OpenSprinkler_Set($@) {
 sub OpenSprinkler_Get($@) {
     my ($hash, @a) = @_;
     return "Unknown argument $a[1], choose status" if ($a[1] ne "status");
+    
+    if (!defined($hash->{PW})) {
+        return "Fehler: Status-Abruf nicht möglich. Kein Passwort hinterlegt.";
+    }
+    
     OpenSprinkler_Poll($hash);
     return "Status-Update getriggert.";
 }
@@ -140,6 +171,13 @@ sub OpenSprinkler_Get($@) {
 sub OpenSprinkler_Poll($) {
     my ($hash) = @_;
     my $name = $hash->{NAME};
+
+    # SCHUTZWALL: Wenn kein Passwort vorhanden ist, breche den HTTP-Poll sofort ab!
+    if (!defined($hash->{PW})) {
+        Log3 $name, 4, "OpenSprinkler ($name) - Polling blockiert: Kein Passwort im Speicher.";
+        return undef;
+    }
+
     my $url = "http://$hash->{IP}/ja?pw=$hash->{PW}";
 
     HttpUtils_NonblockingGet({
@@ -222,7 +260,6 @@ sub OpenSprinkler_Poll($) {
                         my $nstations = $json->{status};
                         readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
                         
-                        # KORREKTUR: "state" wird jetzt ordnungsgemäß INNERHALB des Blocks aktualisiert!
                         readingsBulkUpdate($hash, "state", "connected");
                         readingsEndUpdate($hash, 1);
                     }
@@ -234,13 +271,12 @@ sub OpenSprinkler_Poll($) {
         }
     });
 
-    # Intervall dynamisch laden
+    # Neuen Timer für die nächste Runde anmelden
     my $interval = 60;
     if (defined($attr{$name}) && defined($attr{$name}{interval})) {
         $interval = int($attr{$name}{interval});
     }
     
-    # KORREKTUR: Echten Funktionsnamen mit übergeben, um parallele Timer zu killen
     RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
     InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
 }
