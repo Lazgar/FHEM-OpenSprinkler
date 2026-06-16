@@ -35,7 +35,7 @@ sub OpenSprinkler_Define($$) {
     if (defined(&getKeyValue)) {
         my $pw = getKeyValue($name . "_password");
         if ($pw) {
-            $hash->{PW} = md5_hex($pw);
+            $hash->{helper}{PW} = md5_hex($pw);
             $pw_loaded = 1;
         }
     }
@@ -63,7 +63,7 @@ sub OpenSprinkler_Attr($$$$) {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
 
-    if ($attrName eq "interval" && defined($hash) && defined($hash->{PW})) {
+    if ($attrName eq "interval" && defined($hash) && defined($hash->{helper}{PW})) {
         if ($cmd eq "set") {
             RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
             InternalTimer(time() + int($attrVal), \&OpenSprinkler_Poll, $hash, 0);
@@ -82,7 +82,7 @@ sub OpenSprinkler_Set($@) {
     my @cmd_list;
     
     # 1. DYNAMISCHES MENÜ: Wenn kein Passwort im Speicher ist, NUR "password" anbieten!
-    if (!defined($hash->{PW})) {
+    if (!defined($hash->{helper}{PW})) {
         push(@cmd_list, "password:textField"); 
         my $usage = join(" ", @cmd_list);
         return $usage if (@a < 2);
@@ -95,7 +95,7 @@ sub OpenSprinkler_Set($@) {
             # Speichern im offiziellen FHEM-Secure-Speicher
             if (defined(&setKeyValue)) {
                 setKeyValue($name . "_password", $raw_pw);
-                $hash->{PW} = md5_hex($raw_pw);
+                $hash->{helper}{PW} = md5_hex($raw_pw);
                 Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich verschlüsselt gespeichert.";
                 
                 RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
@@ -129,7 +129,7 @@ sub OpenSprinkler_Set($@) {
         my $raw_pw = $a[2];
         if (defined(&setKeyValue)) {
             setKeyValue($name . "_password", $raw_pw);
-            $hash->{PW} = md5_hex($raw_pw);
+            $hash->{helper}{PW} = md5_hex($raw_pw);
             FW_locationReload();
         }
     }
@@ -141,21 +141,21 @@ sub OpenSprinkler_Set($@) {
         
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
         
-        my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=1&t=$sekunden";
+        my $url = "http://$hash->{IP}/cm?pw=$hash->{helper}{PW}&sid=$sid&en=1&t=$sekunden";
         OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.");
         return undef;
     }
     elsif ($cmd =~ /^station_([0-7])_stop$/) {
         my $sid = $1;
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
-        my $url = "http://$hash->{IP}/cm?pw=$hash->{PW}&sid=$sid&en=0";
+        my $url = "http://$hash->{IP}/cm?pw=$hash->{helper}{PW}&sid=$sid&en=0";
         OpenSprinkler_SendCommand($hash, $url, "Station $sid gestoppt.");
         return undef;
     }
     elsif ($cmd eq "rainDelay") {
         return "Usage: set $name $cmd <hours>" if (@a < 3);
         my $hours = $a[2];
-        my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&rd=$hours";
+        my $url = "http://$hash->{IP}/cv?pw=$hash->{helper}{PW}&rd=$hours";
         OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
         return undef;
     }
@@ -163,7 +163,7 @@ sub OpenSprinkler_Set($@) {
         return "Usage: set $name $cmd on|off" if (@a < 3);
         my $val_state = $a[2];
         my $state = ($val_state eq "on") ? 1 : 0;
-        my $url = "http://$hash->{IP}/cv?pw=$hash->{PW}&en=$state";
+        my $url = "http://$hash->{IP}/cv?pw=$hash->{helper}{PW}&en=$state";
         OpenSprinkler_SendCommand($hash, $url, "System-Betrieb auf $val_state gesetzt");
         return undef;
     }
@@ -175,7 +175,7 @@ sub OpenSprinkler_Get($@) {
     my ($hash, @a) = @_;
     return "Unknown argument $a[1], choose status" if ($a[1] ne "status");
     
-    if (!defined($hash->{PW})) {
+    if (!defined($hash->{helper}{PW})) {
         return "Fehler: Status-Abruf nicht möglich. Kein Passwort hinterlegt.";
     }
     
@@ -189,12 +189,12 @@ sub OpenSprinkler_Poll($) {
     my $name = $hash->{NAME};
 
     # SCHUTZWALL: Wenn kein Passwort vorhanden ist, breche den HTTP-Poll sofort ab!
-    if (!defined($hash->{PW})) {
+    if (!defined($hash->{helper}{PW})) {
         Log3 $name, 4, "OpenSprinkler ($name) - Polling blockiert: Kein Passwort im Speicher.";
         return undef;
     }
 
-    my $url = "http://$hash->{IP}/ja?pw=$hash->{PW}";
+    my $url = "http://$hash->{IP}/ja?pw=$hash->{helper}{PW}";
 
     HttpUtils_NonblockingGet({
         url     => $url,
