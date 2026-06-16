@@ -63,7 +63,7 @@ sub OpenSprinkler_Attr($$$$) {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
 
-    if ($cmd eq "helper" && $attrName eq "active_stations") {
+    if ($cmd eq "set" && $attrName eq "active_stations") {
         # Gibt eine kommagetrennte Liste für die Checkboxen zurück
         return "multiple,station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
     }
