@@ -14,7 +14,7 @@ sub OpenSprinkler_Initialize($) {
     $hash->{SetFn}    = "OpenSprinkler_Set";
     $hash->{GetFn}    = "OpenSprinkler_Get";
     $hash->{AttrFn}   = "OpenSprinkler_Attr"; 
-    $hash->{AttrList} = "interval active_stations" . $readingFnAttributes;
+    $hash->{AttrList} = "interval active_stations " . $readingFnAttributes;
 }
 
 # Definition: define <name> OpenSprinkler <IP-Adresse>
