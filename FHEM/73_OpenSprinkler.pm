@@ -30,10 +30,10 @@ sub OpenSprinkler_Define($$) {
 
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
 
-    # DER MODERNSTE WEG: Abruf aus dem FHEM-Core-Keyring (Achte auf Großschreibung!)
+    # DER ECHTE MODERNSTE WEG: Abruf aus dem FHEM-KeyValue-Speicher
     my $pw_loaded = 0;
-    if (main->can('fhem_Keyring_Get')) {
-        my $pw = fhem_Keyring_Get($name, "password");
+    if (defined(&getKeyValue)) {
+        my $pw = getKeyValue($name . "_password");
         if ($pw) {
             $hash->{PW} = md5_hex($pw);
             $pw_loaded = 1;
@@ -42,7 +42,7 @@ sub OpenSprinkler_Define($$) {
 
     RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
 
-    # Polling nur starten, wenn das Passwort im Keyring existiert
+    # Polling nur starten, wenn das Passwort existiert
     if ($pw_loaded) {
         OpenSprinkler_Poll($hash);
     } else {
@@ -83,9 +83,7 @@ sub OpenSprinkler_Set($@) {
     
     # 1. DYNAMISCHES MENÜ: Wenn kein Passwort im Speicher ist, NUR "password" anbieten!
     if (!defined($hash->{PW})) {
-        # KORREKTUR: "textField" öffnet die Tastatureingabe.
-        # Das Suffix ":password" signalisiert FHEMWEB das Maskieren mit Punkten!
-        push(@cmd_list, "password:textField");
+        push(@cmd_list, "password:textField"); 
         my $usage = join(" ", @cmd_list);
         return $usage if (@a < 2);
         
@@ -94,20 +92,22 @@ sub OpenSprinkler_Set($@) {
             return "Usage: set $name password <your_password>" if (@a < 3);
             my $raw_pw = $a[2];
             
-            if (main->can('fhem_Keyring_Store')) {
-                fhem_Keyring_Store($name, "password", $raw_pw);
+            # Speichern im offiziellen FHEM-Secure-Speicher
+            if (defined(&setKeyValue)) {
+                setKeyValue($name . "_password", $raw_pw);
                 $hash->{PW} = md5_hex($raw_pw);
-                Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich im FHEM-Keyring hinterlegt.";
+                Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich verschlüsselt gespeichert.";
                 
                 RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
                 OpenSprinkler_Poll($hash);
                 
+                # Zwingt den Browser zu einem Reload, damit alle Befehle aufklappen!
                 return "async:FW_locationReload()";
             } else {
-                return "async:FW_msg('FHEM Keyring-Schnittstelle im Core nicht erreichbar.')";
+                return "async:FW_msg('FHEM setKeyValue-Schnittstelle im Core nicht erreichbar.')";
             }
         }
-
+        return "async:FW_msg('Bitte setze zuerst das Passwort mit: set $name password <pw>')";
     }
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
@@ -128,10 +128,10 @@ sub OpenSprinkler_Set($@) {
     if ($cmd eq "password") {
         return "Usage: set $name password <your_password>" if (@a < 3);
         my $raw_pw = $a[2];
-        if (main->can('fhem_Keyring_Store')) {
-            fhem_Keyring_Store($name, "password", $raw_pw);
+        if (defined(&setKeyValue)) {
+            setKeyValue($name . "_password", $raw_pw);
             $hash->{PW} = md5_hex($raw_pw);
-            return "Passwort im Keyring aktualisiert.";
+            return "Passwort aktualisiert.";
         }
     }
     
