@@ -162,12 +162,11 @@ sub OpenSprinkler_Poll($) {
                 if (exists $json->{settings}) {
                     my $s = $json->{settings};
                     
+                    # BLOCK 1: Globale Live-Hardware- und System-Werte
                     readingsBeginUpdate($hash);
                     
-                    # Globale Live-Hardware-Werte
                     readingsBulkUpdate($hash, "current_mA", $s->{curr}) if exists $s->{curr};
                     
-                    # System-Informationen aus "options" parsen
                     if (exists $json->{options}) {
                         my $o = $json->{options};
                         readingsBulkUpdate($hash, "firmware_version", $o->{fwv}) if exists $o->{fwv};
@@ -176,12 +175,11 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "water_level_percent", $o->{wl}) if exists $o->{wl};
                         
                         if (exists $o->{hwt}) {
-                            my %types = (1=>"OSPi (Raspberry)", 172=>"AC Power Version", 220=>"DC Power Verison", 26=>"Latch Version");
+                            my %types = (1=>"OSPi (Raspberry)", 172=>"AC Power Version", 220=>"DC Power Version", 26=>"Latch Version");
                             readingsBulkUpdate($hash, "hardware_type", $types{$o->{hwt}} // "Unknown ($o->{hwt})");
                         }
                     }
                     
-                    # Sensoren und Verzögerungen
                     readingsBulkUpdate($hash, "system_enabled", $s->{en} ? "on" : "off") if exists $s->{en};
                     readingsBulkUpdate($hash, "rain_delay_active", $s->{rd} ? "on" : "off") if exists $s->{rd};
                     
@@ -191,7 +189,6 @@ sub OpenSprinkler_Poll($) {
                         readingsBulkUpdate($hash, "rain_delay_until", "none");
                     }
                     
-                    # Array-Indizes für lrun krisensicher über Variablen ausgelesen
                     if (exists $s->{lrun} && ref($s->{lrun}) eq 'ARRAY') {
                         my $lrun = $s->{lrun};
                         my $last_sid = $lrun->[0]; 
@@ -201,21 +198,22 @@ sub OpenSprinkler_Poll($) {
                             readingsBulkUpdate($hash, "station_" . $last_sid . "_lastDuration", $last_dur);
                         }
                     }
+                    
                     readingsEndUpdate($hash, 1);
 
-                    readingsBeginUpdate($hash);
-                    # Stationsnamen (snames) aus "stations"
+                    # BLOCK 2: Stationsnamen (snames) aus "stations"
                     if (exists $json->{stations} && exists $json->{stations}->{snames}) {
+                        readingsBeginUpdate($hash);
                         my $names = $json->{stations}->{snames};
                         for (my $i = 0; $i < @$names; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
                         }
+                        readingsEndUpdate($hash, 1);
                     }
-                    readingsEndUpdate($hash, 1);
 
-                    readingsBeginUpdate($hash);
-                    # Ventilzustände (on/off) aus "status"
+                    # BLOCK 3: Ventilzustände (on/off) aus "status"
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
+                        readingsBeginUpdate($hash);
                         my $stations = $json->{status}->{sn};
                         for (my $i = 0; $i < @$stations; $i++) {
                             readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
@@ -223,10 +221,11 @@ sub OpenSprinkler_Poll($) {
 
                         my $nstations = $json->{status};
                         readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
+                        
+                        # KORREKTUR: "state" wird jetzt ordnungsgemäß INNERHALB des Blocks aktualisiert!
+                        readingsBulkUpdate($hash, "state", "connected");
+                        readingsEndUpdate($hash, 1);
                     }
-
-                    readingsBulkUpdate($hash, "state", "connected");
-                    readingsEndUpdate($hash, 1);
                 }
             };
             if ($@) {
@@ -240,7 +239,9 @@ sub OpenSprinkler_Poll($) {
     if (defined($attr{$name}) && defined($attr{$name}{interval})) {
         $interval = int($attr{$name}{interval});
     }
-    RemoveInternalTimer($hash);
+    
+    # KORREKTUR: Echten Funktionsnamen mit übergeben, um parallele Timer zu killen
+    RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
     InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
 }
 
