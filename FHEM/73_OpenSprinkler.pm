@@ -80,7 +80,7 @@ sub OpenSprinkler_Set($@) {
     my $name = $hash->{NAME};
     
     my @cmd_list;
-    push(@cmd_list, "password:password"); 
+    push(@cmd_list, "password:textField"); 
     for (my $i = 0; $i < 8; $i++) {
         push(@cmd_list, "station_" . $i . "_start:textField");
         push(@cmd_list, "station_" . $i . "_stop:noArg");
