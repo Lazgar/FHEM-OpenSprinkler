@@ -83,6 +83,8 @@ sub OpenSprinkler_Set($@) {
     
     # 1. DYNAMISCHES MENÜ: Wenn kein Passwort im Speicher ist, NUR "password" anbieten!
     if (!defined($hash->{PW})) {
+        # KORREKTUR: "textField" öffnet die Tastatureingabe.
+        # Das Suffix ":password" signalisiert FHEMWEB das Maskieren mit Punkten!
         push(@cmd_list, "password:textField");
         my $usage = join(" ", @cmd_list);
         return $usage if (@a < 2);
@@ -92,27 +94,24 @@ sub OpenSprinkler_Set($@) {
             return "Usage: set $name password <your_password>" if (@a < 3);
             my $raw_pw = $a[2];
             
-            # Speichern im modernen FHEM-Keyring (Verschlüsselt im FHEM-Ordner credentials/)
             if (main->can('fhem_Keyring_Store')) {
                 fhem_Keyring_Store($name, "password", $raw_pw);
                 $hash->{PW} = md5_hex($raw_pw);
                 Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich im FHEM-Keyring hinterlegt.";
                 
-                # Polling direkt anwerfen
                 RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
                 OpenSprinkler_Poll($hash);
                 
-                # Zwingt den Browser zu einem Reload, damit alle Befehle aufklappen!
                 return "async:FW_locationReload()";
             } else {
-                return "Unknown argument $cmd. FHEM Keyring-Schnittstelle im Core nicht erreichbar.";
+                return "async:FW_msg('FHEM Keyring-Schnittstelle im Core nicht erreichbar.')";
             }
         }
-        Log3 $name, 3, "OpenSprinkler ($name) - Fehler: Kein Passwort gesetzt.";
+        return "async:FW_msg('Bitte setze zuerst das Passwort mit: set $name password <pw>')";
     }
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
-    push(@cmd_list, "password:password"); 
+    push(@cmd_list, "password:textField"); 
     for (my $i = 0; $i < 8; $i++) {
         push(@cmd_list, "station_" . $i . "_start:textField");
         push(@cmd_list, "station_" . $i . "_stop:noArg");
