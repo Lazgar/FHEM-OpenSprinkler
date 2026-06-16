@@ -65,7 +65,7 @@ sub OpenSprinkler_Attr($$$$) {
 
     if ($cmd eq "set" && $attrName eq "active_stations") {
         # Gibt eine kommagetrennte Liste für die Checkboxen zurück
-        return "multiple,station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
+        return "multiple-strict,station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
     }
 
     if ($attrName eq "interval" && defined($hash) && defined($hash->{helper}{PW})) {
