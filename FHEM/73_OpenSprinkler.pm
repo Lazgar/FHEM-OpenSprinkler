@@ -338,48 +338,53 @@ sub OpenSprinkler_Poll($) {
                         readingsEndUpdate($hash, 1);
                     }
 
-                    # BLOCK 3: Ventilzustände und neustartsichere Laufzeit-Berechnungen
+                    # BLOCK 3: Ventilzustände und kalendertagbasierte Laufzeit-Berechnungen
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         readingsBeginUpdate($hash);
                         
                         my $stations = $json->{status}->{sn};
                         for (my $i = 0; $i < @$stations; $i++) {
-                            if ($staitons_attr eq "" || $staitons_attr =~ /station_$i/) {
+                            if ($i < $max_stations && ($active_attr eq "" || $active_attr =~ /station_$i/)) {
                                 my $state_val = $stations->[$i] ? "on" : "off";
-                                
-                                # NEUSTARTSCHUTZ: Wir holen den letzten Zustand direkt aus dem FHEM-Reading
-                                my $old_state = ReadingsVal($name, "station_" . $i . "_state", "unknown");
+                                my $old_state = ReadingsVal($hash->{NAME}, "station_" . $i . "_state", "unknown");
                                 
                                 # Zeitstempel NUR aktualisieren, wenn sich der Zustand real geändert hat
                                 if ($state_val ne $old_state) {
                                     readingsBulkUpdate($hash, "station_".$i."_state", $state_val);
                                 }
                                 
-                                # Jetzt ist der FHEM-Timestamp absolut neustartsicher:
-                                my $ts = ReadingsTimestamp($name, "station_" . $i . "_state", 0);
+                                # Der absolut neustartsichere FHEM-Timestamp der Statusänderung
+                                my $ts = ReadingsTimestamp($hash->{NAME}, "station_" . $i . "_state", 0);
                                 
                                 if ($state_val eq "on") {
-                                    # 1. BERECHNUNG: _runSince (Live-Laufzeit)
-                                    if ($ts ne "0") {
+                                    # 1. BERECHNUNG: _runSince (Aktuelle Live-Laufzeit im Format MM:SS)
+                                    if ($ts ne "0" && main->can("SYSMON_decode_time_diff")) {
                                         my $diff = time() - time_str2num($ts);
-                                        my $val = substr(sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)), 2, 4);
-                                        readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
+                                        eval {
+                                            my $val = substr(sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)), 2, 4);
+                                            readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
+                                        };
                                     }
                                     readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "läuft gerade");
                                 } 
                                 else {
-                                    # 2. BERECHNUNG: _lastRun (Historischer Zeitstempel)
+                                    # 2. BERECHNUNG: _lastRun (Exakte Tage-Differenz aus deinem userReading)
                                     readingsBulkUpdate($hash, "station_" . $i . "_runSince", "");
                                     
-                                    # NUR wenn sie GERADE EBEN von on auf off gewechselt ist, schreiben wir die aktuelle Zeit
-                                    if ($old_state eq "on") {
-                                        my $readable_time = "".localtime(time());
-                                        readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $readable_time);
+                                    if ($ts ne "0" && main->can("SYSMON_decode_time_diff")) {
+                                        # Setzt fest auf den Tagesstart (00:00:01) des Tages, an dem das Ventil ausging
+                                        my $day_start = substr($ts, 0, 10) . " 00:00:01";
+                                        my $diff = time() - time_str2num($day_start);
+                                        
+                                        eval {
+                                            my @var = split(/ /, sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)));
+                                            # Trägt die reinen vergangenen Tage (0, 1, 2...) ein
+                                            readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $var[0]);
+                                        };
                                     }
-                                    # Wenn sie schon off war (z.B. bei einem FHEM-Neustart), 
-                                    # stellen wir sicher, dass ein alter Wert nicht mit "keine Daten" überschrieben wird
                                     else {
-                                        my $current_lastrun = ReadingsVal($name, "station_" . $i . "_lastRun", "");
+                                        # Fallback, falls das Reading noch nie befüllt wurde (z.B. nach der Modul-Ersteinrichtung)
+                                        my $current_lastrun = ReadingsVal($hash->{NAME}, "station_" . $i . "_lastRun", "");
                                         if ($current_lastrun eq "" || $current_lastrun eq "läuft gerade") {
                                             readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "keine Daten");
                                         }
@@ -387,7 +392,6 @@ sub OpenSprinkler_Poll($) {
                                 }
                             }
                         }
-                        
                         my $nstations = $json->{status};
                         readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
                         readingsBulkUpdate($hash, "state", "connected");
