@@ -74,6 +74,29 @@ sub OpenSprinkler_Attr($$$$) {
             InternalTimer(time() + 60, \&OpenSprinkler_Poll, $hash, 0);
         }
     }
+
+    # 2. NEUE LOGIK: Abgewählte Stationen sofort löschen
+    if ($attrName eq "stations" && defined($hash)) {
+        # Wenn das Attribut gelöscht wird (del) oder leer ist, behalten wir alle.
+        # Wenn es gesetzt wird (set), räumen wir die nicht gewählten auf.
+        if ($cmd eq "set" && $attrVal ne "") {
+            
+            # Wir prüfen alle 8 potenziellen Stationen
+            for (my $i = 0; $i < 8; $i++) {
+                
+                # Wenn die Station NICHT im neuen Attributwert vorkommt
+                if ($attrVal !~ /station_$i/) {
+                    
+                    # FHEM-interne Löschbefehle für alle zugehörigen Readings dieser Station
+                    # Format: CommandDeleteReading(undef, "<Gerätename> <ReadingName>")
+                    CommandDeleteReading(undef, "$name station_" . $i . "_name")     if exists $hash->{READINGS}{"station_" . $i . "_name"};
+                    CommandDeleteReading(undef, "$name station_" . $i . "_state")    if exists $hash->{READINGS}{"station_" . $i . "_state"};
+                    CommandDeleteReading(undef, "$name station_" . $i . "_duration") if exists $hash->{READINGS}{"station_" . $i . "_duration"};
+                    CommandDeleteReading(undef, "$name station_" . $i . "_lastDuration") if exists $hash->{READINGS}{"station_" . $i . "_lastDuration"};
+                }
+            }
+        }
+    }
     return undef;
 }
 
@@ -257,12 +280,17 @@ sub OpenSprinkler_Poll($) {
                     
                     readingsEndUpdate($hash, 1);
 
+                    my $staitons_attr = AttrVal($name, "stations", "");
+                    
                     # BLOCK 2: Stationsnamen (snames) aus "stations"
                     if (exists $json->{stations} && exists $json->{stations}->{snames}) {
                         readingsBeginUpdate($hash);
                         my $names = $json->{stations}->{snames};
                         for (my $i = 0; $i < @$names; $i++) {
-                            readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
+                            # FILTER: Nur updaten wenn Attribut leer ist ODER die Station angehakt wurde
+                            if ($staitons_attr eq "" || $staitons_attr =~ /station_$i/) {
+                                readingsBulkUpdate($hash, "station_".$i."_name", $names->[$i]);
+                            }
                         }
                         readingsEndUpdate($hash, 1);
                     }
@@ -272,7 +300,10 @@ sub OpenSprinkler_Poll($) {
                         readingsBeginUpdate($hash);
                         my $stations = $json->{status}->{sn};
                         for (my $i = 0; $i < @$stations; $i++) {
-                            readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
+                            # FILTER: Nur updaten wenn Attribut leer ist ODER die Station angehakt wurde
+                            if ($staitons_attr eq "" || $staitons_attr =~ /station_$i/) {
+                                readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
+                            }
                         }
 
                         my $nstations = $json->{status};
