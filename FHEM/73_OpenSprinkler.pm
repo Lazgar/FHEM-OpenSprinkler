@@ -52,7 +52,7 @@ sub OpenSprinkler_Define($$) {
 
     # NEU: Erzeugt die Checkboxen im FHEM-Frontend für das Attribut
     my $station_options = "station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
-    $attr{$name}{widgetOverride} = "active_stations:multiple,checkbox,$station_options" if (!defined($attr{$name}{widgetOverride}));
+    $attr{$name}{widgetOverride} = "active_stations:multiple-strict,checkbox,$station_options" if (!defined($attr{$name}{widgetOverride}));
 
     return undef;
 }
