@@ -308,40 +308,56 @@ sub OpenSprinkler_Poll($) {
                         readingsEndUpdate($hash, 1);
                     }
 
-                    # BLOCK 3: Ventilzustände (on/off) aus "status"
+                    # BLOCK 3: Ventilzustände und neustartsichere Laufzeit-Berechnungen
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         readingsBeginUpdate($hash);
-                        my $stations = $json->{status}->{sn};
                         
+                        my $stations = $json->{status}->{sn};
                         for (my $i = 0; $i < @$stations; $i++) {
-                            # FILTER: Nur updaten wenn Attribut leer ist ODER die Station angehakt wurde
                             if ($staitons_attr eq "" || $staitons_attr =~ /station_$i/) {
-                                # Aktuellen Zustand setzen
                                 my $state_val = $stations->[$i] ? "on" : "off";
-                                readingsBulkUpdate($hash, "station_".$i."_state", $state_val);
-                                # --- NEU: Native Berechnung deiner userReadings für ALLE aktiven Stationen ---
-                                my $sys_state = ReadingsVal($name, "state", "offline");
-                                my $ts = ReadingsTimestamp($name, "station_" . $i . "_state", 0);
-                                # Berechnung für: _runSince
-                                if ($state_val eq "on" && $sys_state eq "connected" && $ts ne "0") {
-                                    my $diff = time() - time_str2num($ts);
-                                    my $val = substr(sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)), 2, 4);
-                                    readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
-                                } else {
-                                    readingsBulkUpdate($hash, "station_" . $i . "_runSince", "");
+                                
+                                # NEUSTARTSCHUTZ: Wir holen den letzten Zustand direkt aus dem FHEM-Reading
+                                my $old_state = ReadingsVal($name, "station_" . $i . "_state", "unknown");
+                                
+                                # Zeitstempel NUR aktualisieren, wenn sich der Zustand real geändert hat
+                                if ($state_val ne $old_state) {
+                                    readingsBulkUpdate($hash, "station_".$i."_state", $state_val);
                                 }
-                                # Berechnung für: _lastRun
-                                if ($state_val eq "off" && $ts ne "0") {
-                                    my $day_start = substr($ts, 0, 10) . " 00:00:01";
-                                    my $diff = time() - time_str2num($day_start);
-                                    my @var = split(/ /, sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)));
-                                    readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $var[0]);
-                                } else {
+                                
+                                # Jetzt ist der FHEM-Timestamp absolut neustartsicher:
+                                my $ts = ReadingsTimestamp($name, "station_" . $i . "_state", 0);
+                                
+                                if ($state_val eq "on") {
+                                    # 1. BERECHNUNG: _runSince (Live-Laufzeit)
+                                    if ($ts ne "0") {
+                                        my $diff = time() - time_str2num($ts);
+                                        my $val = substr(sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)), 2, 4);
+                                        readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
+                                    }
                                     readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "läuft gerade");
+                                } 
+                                else {
+                                    # 2. BERECHNUNG: _lastRun (Historischer Zeitstempel)
+                                    readingsBulkUpdate($hash, "station_" . $i . "_runSince", "");
+                                    
+                                    # NUR wenn sie GERADE EBEN von on auf off gewechselt ist, schreiben wir die aktuelle Zeit
+                                    if ($old_state eq "on") {
+                                        my $readable_time = "".localtime(time());
+                                        readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $readable_time);
+                                    }
+                                    # Wenn sie schon off war (z.B. bei einem FHEM-Neustart), 
+                                    # stellen wir sicher, dass ein alter Wert nicht mit "keine Daten" überschrieben wird
+                                    else {
+                                        my $current_lastrun = ReadingsVal($name, "station_" . $i . "_lastRun", "");
+                                        if ($current_lastrun eq "" || $current_lastrun eq "läuft gerade") {
+                                            readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "keine Daten");
+                                        }
+                                    }
                                 }
                             }
                         }
-
+                        
                         my $nstations = $json->{status};
                         readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
                         readingsBulkUpdate($hash, "state", "connected");
