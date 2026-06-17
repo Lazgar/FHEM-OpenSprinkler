@@ -136,9 +136,16 @@ sub OpenSprinkler_Set($@) {
     
     # 2. STANDARD-MENÜ (Wird erst geladen, wenn das PW verifiziert ist)
     push(@cmd_list, "password:textField"); 
+
+    # NEU: Aktive Stationen aus dem Attribut holen
+    my $stations_attr = AttrVal($name, "stations", "");
+    
     for (my $i = 0; $i < 8; $i++) {
-        push(@cmd_list, "station_" . $i . "_start:textField");
-        push(@cmd_list, "station_" . $i . "_stop:noArg");
+        # FILTER: Nur ins Menü aufnehmen, wenn das Attribut leer ist ODER die Station angehakt wurde
+        if ($stations_attr eq "" || $stations_attr =~ /station_$i/) {
+            push(@cmd_list, "station_" . $i . "_start:textField");
+            push(@cmd_list, "station_" . $i . "_stop:noArg");
+        }
     }
     push(@cmd_list, "rainDelay:textField");
     push(@cmd_list, "system_enabled:on,off");
