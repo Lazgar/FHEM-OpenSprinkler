@@ -93,6 +93,8 @@ sub OpenSprinkler_Attr($$$$) {
                     CommandDeleteReading(undef, "$name station_" . $i . "_state")    if exists $hash->{READINGS}{"station_" . $i . "_state"};
                     CommandDeleteReading(undef, "$name station_" . $i . "_duration") if exists $hash->{READINGS}{"station_" . $i . "_duration"};
                     CommandDeleteReading(undef, "$name station_" . $i . "_lastDuration") if exists $hash->{READINGS}{"station_" . $i . "_lastDuration"};
+                    CommandDeleteReading(undef, "$name station_" . $i . "_runSince")     if exists $hash->{READINGS}{"station_" . $i . "_runSince"};
+                    CommandDeleteReading(undef, "$name station_" . $i . "_lastRun")      if exists $hash->{READINGS}{"station_" . $i . "_lastRun"};
                 }
             }
             # NEU: Zwingt die FHEMWEB-Oberfläche zum Neuaufbau des SET-Dropdowns
@@ -310,16 +312,38 @@ sub OpenSprinkler_Poll($) {
                     if (exists $json->{status} && exists $json->{status}->{sn}) {
                         readingsBeginUpdate($hash);
                         my $stations = $json->{status}->{sn};
+                        
                         for (my $i = 0; $i < @$stations; $i++) {
                             # FILTER: Nur updaten wenn Attribut leer ist ODER die Station angehakt wurde
                             if ($staitons_attr eq "" || $staitons_attr =~ /station_$i/) {
-                                readingsBulkUpdate($hash, "station_".$i."_state", $stations->[$i] ? "on" : "off");
+                                # Aktuellen Zustand setzen
+                                my $state_val = $stations->[$i] ? "on" : "off";
+                                readingsBulkUpdate($hash, "station_".$i."_state", $state_val);
+                                # --- NEU: Native Berechnung deiner userReadings für ALLE aktiven Stationen ---
+                                my $sys_state = ReadingsVal($name, "state", "offline");
+                                my $ts = ReadingsTimestamp($name, "station_" . $i . "_state", 0);
+                                # Berechnung für: _runSince
+                                if ($state_val eq "on" && $sys_state eq "connected" && $ts ne "0") {
+                                    my $diff = time() - time_str2num($ts);
+                                    my $val = substr(sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)), 2, 4);
+                                    readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
+                                } else {
+                                    readingsBulkUpdate($hash, "station_" . $i . "_runSince", "");
+                                }
+                                # Berechnung für: _lastRun
+                                if ($state_val eq "off" && $ts ne "0") {
+                                    my $day_start = substr($ts, 0, 10) . " 00:00:01";
+                                    my $diff = time() - time_str2num($day_start);
+                                    my @var = split(/ /, sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)));
+                                    readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $var[0]);
+                                } else {
+                                    readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "läuft gerade");
+                                }
                             }
                         }
 
                         my $nstations = $json->{status};
                         readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
-                        
                         readingsBulkUpdate($hash, "state", "connected");
                         readingsEndUpdate($hash, 1);
                     }
