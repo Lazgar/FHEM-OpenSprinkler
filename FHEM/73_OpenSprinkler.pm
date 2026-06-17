@@ -19,6 +19,17 @@ sub OpenSprinkler_Initialize($) {
     $hash->{AttrList} = "interval stations:multiple-strict,$stations " . $readingFnAttributes;
 }
 
+# Hilfsfunktion: Aktualisiert die AttrList im laufenden Betrieb
+sub OpenSprinkler_UpdateAttrList($$) {
+    my ($hash, $max_stations) = @_;
+    my @st_array;
+    for (my $i = 0; $i < $max_stations; $i++) {
+        push(@st_array, "station_$i");
+    }
+    my $stations_string = join(",", @st_array);
+    $hash->{AttrList} = "interval stations:multiple-strict,$stations_string " . $readingFnAttributes;
+}
+
 # Definition: define <name> OpenSprinkler <IP-Adresse>
 sub OpenSprinkler_Define($$) {
     my ($hash, $def) = @_;
@@ -31,6 +42,9 @@ sub OpenSprinkler_Define($$) {
     $hash->{IP}   = $a[2];
 
     $attr{$name}{interval} = 60 if (!defined($attr{$name}{interval}));
+
+    # NEU: Standardwert für Schleifen vor dem ersten API-Poll festlegen
+    $hash->{helper}{MAX_STATIONS} = 8; 
 
     # DER ECHTE MODERNSTE WEG: Abruf aus dem FHEM-KeyValue-Speicher
     my $pw_loaded = 0;
@@ -64,6 +78,7 @@ sub OpenSprinkler_Undefine($$) {
 sub OpenSprinkler_Attr($$$$) {
     my ($cmd, $name, $attrName, $attrVal) = @_;
     my $hash = $defs{$name};
+    my $max_stations = $hash->{helper}{MAX_STATIONS} // 8;
 
     if ($attrName eq "interval" && defined($hash) && defined($hash->{helper}{PW})) {
         if ($cmd eq "set") {
@@ -82,7 +97,7 @@ sub OpenSprinkler_Attr($$$$) {
         if ($cmd eq "set" && $attrVal ne "") {
             
             # Wir prüfen alle 8 potenziellen Stationen
-            for (my $i = 0; $i < 8; $i++) {
+            for (my $i = 0; $i < $max_stations; $i++) {
                 
                 # Wenn die Station NICHT im neuen Attributwert vorkommt
                 if ($attrVal !~ /station_$i/) {
@@ -109,6 +124,7 @@ sub OpenSprinkler_Attr($$$$) {
 sub OpenSprinkler_Set($@) {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
+    my $max_stations = $hash->{helper}{MAX_STATIONS} // 8;
     
     my @cmd_list;
     
@@ -146,7 +162,7 @@ sub OpenSprinkler_Set($@) {
     # NEU: Aktive Stationen aus dem Attribut holen
     my $stations_attr = AttrVal($name, "stations", "");
     
-    for (my $i = 0; $i < 8; $i++) {
+    for (my $i = 0; $i < $max_stations; $i++) {
         # FILTER: Nur ins Menü aufnehmen, wenn das Attribut leer ist ODER die Station angehakt wurde
         if ($stations_attr eq "" || $stations_attr =~ /station_$i/) {
             push(@cmd_list, "station_" . $i . "_start:textField");
@@ -172,7 +188,7 @@ sub OpenSprinkler_Set($@) {
         }
     }
     
-    if ($cmd =~ /^station_([0-7])_start$/) {
+    if ($cmd =~ /^station_(\d+)_start$/) {
         my $sid = $1;
         return "Usage: set $name $cmd <seconds>" if (@a < 3);
         my $sekunden = $a[2];
@@ -183,7 +199,7 @@ sub OpenSprinkler_Set($@) {
         OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.");
         return undef;
     }
-    elsif ($cmd =~ /^station_([0-7])_stop$/) {
+    elsif ($cmd =~ /^station_(\d+)_stop$/) {
         my $sid = $1;
         readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
         my $url = "http://$hash->{IP}/cm?pw=$hash->{helper}{PW}&sid=$sid&en=0";
@@ -210,7 +226,7 @@ sub OpenSprinkler_Set($@) {
 }
 
 sub OpenSprinkler_Get($@) {
-    my ($hash, @a) = @_;
+    my ($hash, @a) = @_;    
     return "Unknown argument $a[1], choose status" if ($a[1] ne "status");
     
     if (!defined($hash->{helper}{PW})) {
@@ -225,6 +241,7 @@ sub OpenSprinkler_Get($@) {
 sub OpenSprinkler_Poll($) {
     my ($hash) = @_;
     my $name = $hash->{NAME};
+    my $max_stations = $hash->{helper}{MAX_STATIONS} // 8;
 
     # SCHUTZWALL: Wenn kein Passwort vorhanden ist, breche den HTTP-Poll sofort ab!
     if (!defined($hash->{helper}{PW})) {
@@ -269,6 +286,19 @@ sub OpenSprinkler_Poll($) {
                         if (exists $o->{hwt}) {
                             my %types = (1=>"OSPi (Raspberry)", 172=>"AC Power Version", 220=>"DC Power Version", 26=>"Latch Version");
                             readingsBulkUpdate($hash, "hardware_type", $types{$o->{hwt}} // "Unknown ($o->{hwt})");
+                        }
+
+                        # --- NEU: DYNAMISCHE ERKENNUNG DER STATIONSANZAHL ---
+                        if (exists $o->{ext}) {
+                            my $ext_boards = int($o->{ext});
+                            my $calc_stations = 8 + ($ext_boards * 16); # 8 Basis + 16 pro Board
+                            
+                            # Wenn sich die Anzahl geändert hat, passen wir die FHEM-Optionen an
+                            if (!defined($hash->{helper}{MAX_STATIONS}) || $hash->{helper}{MAX_STATIONS} != $calc_stations) {
+                                $hash->{helper}{MAX_STATIONS} = $calc_stations;
+                                OpenSprinkler_UpdateAttrList($hash, $calc_stations);
+                                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}]: Erweiterungsboards erkannt ($ext_boards). Stationsanzahl auf $calc_stations angepasst.";
+                            }
                         }
                     }
                     
