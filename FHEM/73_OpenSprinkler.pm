@@ -95,6 +95,8 @@ sub OpenSprinkler_Attr($$$$) {
                     CommandDeleteReading(undef, "$name station_" . $i . "_lastDuration") if exists $hash->{READINGS}{"station_" . $i . "_lastDuration"};
                 }
             }
+            # NEU: Zwingt die FHEMWEB-Oberfläche zum Neuaufbau des SET-Dropdowns
+            FW_locationReload();
         }
     }
     return undef;
