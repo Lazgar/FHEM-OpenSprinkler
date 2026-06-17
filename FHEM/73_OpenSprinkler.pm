@@ -14,7 +14,7 @@ sub OpenSprinkler_Initialize($) {
     $hash->{SetFn}    = "OpenSprinkler_Set";
     $hash->{GetFn}    = "OpenSprinkler_Get";
     $hash->{AttrFn}   = "OpenSprinkler_Attr"; 
-    $hash->{AttrList} = "interval " . $readingFnAttributes;
+    $hash->{AttrList} = "interval active_stations " . $readingFnAttributes;
 }
 
 # Definition: define <name> OpenSprinkler <IP-Adresse>
@@ -49,6 +49,10 @@ sub OpenSprinkler_Define($$) {
         Log3 $name, 3, "OpenSprinkler ($name) - Gerät initialisiert. Bitte setze das Passwort mit: set $name password <pw>";
         readingsSingleUpdate($hash, "state", "missing_password", 1);
     }
+
+    # NEU: Erzeugt die Checkboxen im FHEM-Frontend für das Attribut
+    my $station_options = "station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";
+    $attr{$name}{widgetOverride} = "active_stations:multiple,checkbox,$station_options" if (!defined($attr{$name}{widgetOverride}));
 
     return undef;
 }
