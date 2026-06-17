@@ -96,7 +96,9 @@ sub OpenSprinkler_Attr($$$$) {
                 }
             }
             # NEU: Zwingt die FHEMWEB-Oberfläche zum Neuaufbau des SET-Dropdowns
-            FW_locationReload();
+            if (defined(&FW_locationReload)) {
+                FW_locationReload();
+            }
         }
     }
     return undef;
