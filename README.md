@@ -31,7 +31,7 @@ update add https://raw.githubusercontent.com/Lazgar/FHEM-OpenSprinkler/master/co
 Triggere nun das Update in FHEM, damit die Moduldatei automatisch vom GitHub-Repository heruntergeladen und am richtigen Ort (`/opt/fhem/FHEM/73_OpenSprinkler.pm`) abgelegt wird:
 
 ```fhem
-update
+update all
 ```
 Nach erfolgreichem Update startet das Modul automatisch mit dem FHEM-System (bzw. kann sofort per `reload 73_OpenSprinkler.pm` ohne Neustart geladen werden).
 
