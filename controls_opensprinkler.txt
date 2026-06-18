@@ -1,1 +1,1 @@
-UPD 2026-06-18_07:15:00 22268 FHEM/73_OpenSprinkler.pm
+UPD 2026-06-18_07:40:00 22181 FHEM/73_OpenSprinkler.pm
