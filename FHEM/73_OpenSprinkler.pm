@@ -192,43 +192,46 @@ sub OpenSprinkler_Set($@) {
         }
     }
 
-    # --- NEU: DAS HTML-POPUP FÜR DIE FLIEGENDE AUSWAHL ---
+    # --- KORRIGIERT: HTML-POPUP TRIGERUNG FÜR DIE FLIEGENDE AUSWAHL ---
     if ($cmd eq "zone_steuern") {
-        my $active_attr = AttrVal($name, "active_stations", "");
+        my $active_attr = AttrVal($name, "stations", "");
         
         # Wir bauen die Dropdown-Optionen mit echten Klarnamen dynamisch zusammen
         my $dropdown_options = "";
         for (my $i = 0; $i < $max_stations; $i++) {
             if ($active_attr eq "" || $active_attr =~ /station_$i/) {
-                # Holt den Klarnamen aus den Readings (Fallback: "Station X")
                 my $alias = ReadingsVal($name, "station_" . $i . "_name", "Station $i");
-                $dropdown_options .= "<option value=\\\"$i\\\">$alias (ID: $i)</option>";
+                $dropdown_options .= "<option value='$i'>$alias (ID: $i)</option>";
             }
         }
-            
-        # HTML & JavaScript Code für das modale FHEM-Fenster
-        # Wichtig: Alle Anführungszeichen innerhalb des Strings müssen dreifach maskiert werden (\\\")
-        my $html = "<div style=\\\"padding:15px; min-width:280px; font-family:Arial,sans-serif;\\\">" .
-                   "  <h3 style=\\\"margin-top:0; color:#2780e3;\\\">OpenSprinkler Steuerung</h3>" .
-                   "  <hr style=\\\"border:0; border-top:1px solid #ccc;\\\">" .
-                   "  <table style=\\\"width:100%;\\\">" .
-                   "    <tr>" .
-                   "      <td style=\\\"padding:5px 0;\\\"><b>Zone wählen:</b></td>" .
-                   "      <td><select id=\\\"os_zone\\\" style=\\\"width:100%; padding:4px;\\\">$dropdown_options</select></td>" .
-                   "    </tr>" .
-                   "    <tr>" .
-                   "      <td style=\\\"padding:5px 0;\\\"><b>Dauer:</b></td>" .
-                   "      <td><input id=\\\"os_time\\\" type=\\\"text\\\" value=\\\"300\\\" size=\\\"5\\\" style=\\\"padding:4px; text-align:center;\\\"> Sek.</td>" .
-                   "    </tr>" .
-                   "  </table>" .
-                   "  <br>" .
-                   "  <div style=\\\"text-align:right;\\\">" .
-                   "    <button onclick=\\\"var z=document.getElementById(\'os_zone\').value; var t=document.getElementById(\'os_time\').value; FW_cmd(\'/fhem?cmd=set $name station_\'+z+\'_stop\'); loadLinkDialogClose();\\\" style=\\\"padding:6px 12px; background:#d9534f; color:white; border:0; border-radius:4px; cursor:pointer; margin-right:5px;\\\">Zone Stop</button>" .
-                   "    <button onclick=\\\"var z=document.getElementById(\'os_zone\').value; var t=document.getElementById(\'os_time\').value; FW_cmd(\'/fhem?cmd=set $name station_\'+z+\'_start \'+t); loadLinkDialogClose();\\\" style=\\\"padding:6px 12px; background:#5cb85c; color:white; border:0; border-radius:4px; cursor:pointer;\\\">Zone Start</button>" .
-                   "  </div>" .
+        
+        # HTML-Struktur (Hier nutzen wir einfache Anführungszeichen, um Maskierungsfehler zu vermeiden)
+        my $html = "<div style='padding:15px; min-width:280px; font-family:Arial,sans-serif;'>".
+                   "  <h3 style='margin-top:0; color:#2780e3;'>OpenSprinkler Steuerung</h3>".
+                   "  <hr style='border:0; border-top:1px solid #ccc;'>".
+                   "  <table style='width:100%;'>".
+                   "    <tr>".
+                   "      <td style='padding:5px 0;'><b>Zone wählen:</b></td>".
+                   "      <td><select id='os_zone' style='width:100%; padding:4px;'>$dropdown_options</select></td>".
+                   "    </tr>".
+                   "    <tr>".
+                   "      <td style='padding:5px 0;'><b>Dauer:</b></td>".
+                   "      <td><input id='os_time' type='text' value='300' size='5' style='padding:4px; text-align:center;'> Sek.</td>".
+                   "    </tr>".
+                   "  </table>".
+                   "  <br>".
+                   "  <div style='text-align:right;'>".
+                   "    <button onclick=\"var z=document.getElementById('os_zone').value; FW_cmd('/fhem?cmd=set $name station_'+z+'_stop');      \$('.dialogId').dialog('close');\" style='padding:6px 12px; background:#d9534f; color:white; border:0; border-radius:4px; cursor:pointer; margin-right:5px;'>Zone Stop</button>".
+                   "    <button onclick=\"var z=document.getElementById('os_zone').value; var t=document.getElementById('os_time').value; FW_cmd('/fhem?cmd=set $name station_'+z+'_start '+t); \$('.dialogId').dialog('close');\" style='padding:6px 12px; background:#5cb85c; color:white; border:0; border-radius:4px; cursor:pointer;'>Zone Start</button>".
+                   "  </div>".
                    "</div>";
-                   
-        return "async:loadLinkDialog('Garten bewässern', '" . $html . "')";
+        
+        # Wir entfernen alle Zeilenumbrüche, da JavaScript sonst abbricht
+        $html =~ s/\n/ /g;
+        $html =~ s/\r/ /g;
+        
+        # SAUBERER FHEM-CORE WEG: Übergabe via anonymer jQuery-Dialogbox über async:
+        return "async:\$('<div>').html('" . $html . "').dialog({modal:true, title:'Garten bewässern', width:'auto', dialogClass:'dialogId'});";
     }
     
     if ($cmd =~ /^station_(\d+)_start$/) {
