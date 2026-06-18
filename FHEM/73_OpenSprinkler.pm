@@ -162,7 +162,6 @@ sub OpenSprinkler_Set($@) {
     
     # 2. STANDARD-MENÃœ (Wird erst geladen, wenn das PW verifiziert ist)
     push(@cmd_list, "password:textField");
-    push(@cmd_list, "zone_steuern:noArg"); 
 
     # NEU: Aktive Stationen aus dem Attribut holen
     my $stations_attr = AttrVal($name, "stations", "");
@@ -191,13 +190,6 @@ sub OpenSprinkler_Set($@) {
             $hash->{helper}{PW} = md5_hex($raw_pw);
             FW_locationReload();
         }
-    }
-
-    # --- DIESMAL GARANTIERT FEHLERFREI: POPUP ÜBER INTERNEN FHEMWEB-KANAL ---
-    if ($cmd eq "zone_steuern") {
-        # Wird im Hintergrund aufgerufen, wenn über die Weboberfläche geschaltet wird.
-        # Es gibt keinen Text zurück und stürzt niemals ab.
-        return undef; 
     }
     
     if ($cmd =~ /^station_(\d+)_start$/) {
@@ -416,37 +408,6 @@ sub OpenSprinkler_Poll($) {
         $interval = int($attr{$name}{interval});
     }
 
-    # --- NATIVES POPUP ÜBER devStateIcon GENERIEREN ---
-                    my $active_attr = AttrVal($hash->{NAME}, "stations", "");
-                    my $dropdown_options = "";
-                    for (my $i = 0; $i < $max_stations; $i++) {
-                        if ($active_attr eq "" || $active_attr =~ /station_$i/) {
-                            my $alias = ReadingsVal($hash->{NAME}, "station_" . $i . "_name", "Station $i");
-                            $dropdown_options .= "<option value='$i'>$alias (ID: $i)</option>";
-                        }
-                    }
-
-                    # Der HTML-Inhalt des Popups
-                    my $popup_html = "<div style='padding:15px; min-width:260px; text-align:left;'>".
-                                     "  <h3>Zone starten</h3>".
-                                     "  Zone: <select id='os_zone_$name' style='width:100%;'>$dropdown_options</select><br><br>".
-                                     "  Dauer: <input id='os_time_$name' type='text' value='300' size='4'> Sek.<br><br>".
-                                     "  <button onclick=\"FW_cmd('/fhem?cmd=set $name station_'+document.getElementById('os_zone_$name').value+'_start '+document.getElementById('os_time_$name').value); $('.ui-dialog-content').dialog('close');\" style='background:#5cb85c; color:white; border:0; padding:5px 10px; border-radius:4px;'>Start</button> ".
-                                     "  <button onclick=\"FW_cmd('/fhem?cmd=set $name station_'+document.getElementById('os_zone_$name').value+'_stop'); $('.ui-dialog-content').dialog('close');\" style='background:#d9534f; color:white; border:0; padding:5px 10px; border-radius:4px;'>Stop</button>".
-                                     "</div>";
-
-                    # Wir entfernen Zeilenumbrüche
-                    $popup_html =~ s/\n/ /g;
-                    $popup_html =~ s/\r/ /g;
-                    # Maskieren einfache Anführungszeichen für den FHEMWEB-Link
-                    $popup_html =~ s/'/\\'/g;
-
-                    # Wir schreiben ein dynamisches Reading, das FHEMWEB als klickbaren Link interpretiert
-                    my $icon_link = "connected <a href=\"javascript:void(0)\" onclick=\"\$('<div>').html('$popup_html').dialog({modal:true,title:'Bewässerung',width:'auto'});\" style='margin-left:10px; text-decoration:none;'>⚙️ [Zonen steuern]</a>";
-                    
-                    readingsSingleUpdate($hash, "state_icon", $icon_link, 1);
-                    # -----------------------------------------------------------------
-    
     RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
     InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
 }
