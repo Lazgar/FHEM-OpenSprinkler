@@ -193,11 +193,11 @@ sub OpenSprinkler_Set($@) {
         }
     }
 
-    # --- ABSOLUT SICHER: HTML-POPUP VIA BASE64 ---
+    # --- DIE FINALE LÖSUNG: HTML-POPUP VIA NATIVEM FW_MSG ---
     if ($cmd eq "zone_steuern") {
         my $active_attr = AttrVal($name, "active_stations", "");
         
-        # 1. Dropdown-Optionen generieren (Völlig entspannt mit normalen Anführungszeichen)
+        # 1. Dropdown-Optionen generieren
         my $dropdown_options = "";
         for (my $i = 0; $i < $max_stations; $i++) {
             if ($active_attr eq "" || $active_attr =~ /station_$i/) {
@@ -206,7 +206,7 @@ sub OpenSprinkler_Set($@) {
             }
         }
         
-        # 2. Das rohe HTML-Design (Keinerlei Backslashes oder Maskierungen mehr nötig!)
+        # 2. Das HTML-Design (Keine Maskierungen nötig)
         my $html = '<div style="padding:15px; min-width:280px; font-family:Arial,sans-serif;">' .
                    '  <h3 style="margin-top:0; color:#2780e3;">OpenSprinkler Steuerung</h3>' .
                    '  <hr style="border:0; border-top:1px solid #ccc;">' .
@@ -231,13 +231,13 @@ sub OpenSprinkler_Set($@) {
         $html =~ s/\n/ /g;
         $html =~ s/\r/ /g;
         
-        # 3. HTML in Base64 umwandeln und Zeilenumbrüche der Base64-Generierung löschen
+        # 3. In Base64 codieren
         my $b64_html = encode_base64($html);
         $b64_html =~ s/\n//g;
         $b64_html =~ s/\r//g;
         
-        # 4. Der absolut sichere Transportweg: JavaScript decodiert den reinen Text-String fliegend im Browser
-        return "async:\$('<div class=\"os_dialog\">').html(decodeURIComponent(escape(atob('" . $b64_html . "')))).dialog({modal:true, title:'Garten bewässern', width:'auto'});";
+        # 4. Transport über FW_msg: Absolut ausführungssicher im Browser-DOM
+        return "async:FW_msg(\\\"<script>\$('<div>').addClass('os_dialog').html(atob('" . $b64_html . "')).dialog({modal:true, title:'Garten bewässern', width:'auto'});</script>\\\")";
     }
     
     if ($cmd =~ /^station_(\d+)_start$/) {
