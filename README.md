@@ -20,17 +20,20 @@ Das Modul kommuniziert direkt über die lokale HTTP-JSON-API des OpenSprinkler-C
 
 ## 🚀 Installation & Einrichtung
 
-### 1. Moduldatei kopieren
-Speichere den Code des Moduls als **`73_OpenSprinkler.pm`** und kopiere die Datei auf deinem FHEM-Server in das offizielle FHEM-Verzeichnis:
-```bash
-/opt/fhem/FHEM/
+### 1. Repository als Updatequelle in FHEM hinzufügen
+Kopiere folgenden Befehl und füge ihn oben in die FHEM-Befehlszeile ein. Dadurch wird das Modul direkt in den offiziellen FHEM-Updateprozess integriert:
+
+```fhem
+update add https://raw.githubusercontent.com/Lazgar/FHEM-OpenSprinkler/master/controls_opensprinkler.txt
 ```
 
-### 2. Modul in FHEM laden
-Gib in der FHEM-Befehlszeile (FHEMWEB) folgenden Befehl ein, um das Modul ohne Systemneustart zu aktivieren:
+### 2. Update ausführen
+Triggere nun das Update in FHEM, damit die Moduldatei automatisch vom GitHub-Repository heruntergeladen und am richtigen Ort (`/opt/fhem/FHEM/73_OpenSprinkler.pm`) abgelegt wird:
+
 ```fhem
-reload 73_OpenSprinkler.pm
+update
 ```
+Nach erfolgreichem Update startet das Modul automatisch mit dem FHEM-System (bzw. kann sofort per `reload 73_OpenSprinkler.pm` ohne Neustart geladen werden).
 
 ### 3. Gerät definieren
 Lege die Instanz deiner Bewässerungssteuerung mit der IP-Adresse deines OpenSprinklers an:
