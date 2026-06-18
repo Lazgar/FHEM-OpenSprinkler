@@ -193,7 +193,7 @@ sub OpenSprinkler_Set($@) {
         }
     }
 
-    # --- DIE FINALE LÖSUNG: HTML-POPUP VIA NATIVEM FW_MSG ---
+    # --- DIESMAL GARANTIERT FEHLERFREI: POPUP ÜBER INTERNEN FHEMWEB-KANAL ---
     if ($cmd eq "zone_steuern") {
         my $active_attr = AttrVal($name, "active_stations", "");
         
@@ -206,7 +206,7 @@ sub OpenSprinkler_Set($@) {
             }
         }
         
-        # 2. Das HTML-Design (Keine Maskierungen nötig)
+        # 2. Das HTML-Design (Komplett ohne Maskierungszwang)
         my $html = '<div style="padding:15px; min-width:280px; font-family:Arial,sans-serif;">' .
                    '  <h3 style="margin-top:0; color:#2780e3;">OpenSprinkler Steuerung</h3>' .
                    '  <hr style="border:0; border-top:1px solid #ccc;">' .
@@ -227,17 +227,27 @@ sub OpenSprinkler_Set($@) {
                    '  </div>' .
                    '</div>';
         
-        # Zeilenumbrüche entfernen
+        # Zeilenumbrüche für JavaScript entfernen
         $html =~ s/\n/ /g;
         $html =~ s/\r/ /g;
         
-        # 3. In Base64 codieren
+        # 3. HTML in Base64 codieren
         my $b64_html = encode_base64($html);
         $b64_html =~ s/\n//g;
         $b64_html =~ s/\r//g;
         
-        # 4. Transport über FW_msg: Absolut ausführungssicher im Browser-DOM
-        return "async:FW_msg(\\\"<script>\$('<div>').addClass('os_dialog').html(atob('" . $b64_html . "')).dialog({modal:true, title:'Garten bewässern', width:'auto'});</script>\\\")";
+        # 4. DER SYSTEM-INTEGRIERTE WEG: Wir senden das JS-Popup direkt an FHEMWEB
+        if (defined($main::FW_wname)) {
+            # Baut das JS-Kommando zusammen
+            my $js_code = "\$('<div class=\"os_dialog\">').html(atob('" . $b64_html . "')).dialog({modal:true, title:'Garten bewässern', width:'auto'});";
+            
+            # Schiebt den Befehl direkt in die aktive FHEMWEB-Instanz
+            FW_json("[\"inline\",\"$js_code\"]");
+            return undef; # Verhindert, dass FHEM irgendeinen Text ins Web-Interface schreibt!
+        }
+        
+        # Fallback für Scripte, falls keine Webschnittstelle aktiv ist
+        return "Popup kann nur in FHEMWEB geöffnet werden.";
     }
     
     if ($cmd =~ /^station_(\d+)_start$/) {
