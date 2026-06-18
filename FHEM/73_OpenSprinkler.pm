@@ -195,59 +195,9 @@ sub OpenSprinkler_Set($@) {
 
     # --- DIESMAL GARANTIERT FEHLERFREI: POPUP ÜBER INTERNEN FHEMWEB-KANAL ---
     if ($cmd eq "zone_steuern") {
-        my $active_attr = AttrVal($name, "active_stations", "");
-        
-        # 1. Dropdown-Optionen generieren
-        my $dropdown_options = "";
-        for (my $i = 0; $i < $max_stations; $i++) {
-            if ($active_attr eq "" || $active_attr =~ /station_$i/) {
-                my $alias = ReadingsVal($name, "station_" . $i . "_name", "Station $i");
-                $dropdown_options .= '<option value="' . $i . '">' . $alias . ' (ID: ' . $i . ')</option>';
-            }
-        }
-        
-        # 2. Das HTML-Design (Komplett ohne Maskierungszwang)
-        my $html = '<div style="padding:15px; min-width:280px; font-family:Arial,sans-serif;">' .
-                   '  <h3 style="margin-top:0; color:#2780e3;">OpenSprinkler Steuerung</h3>' .
-                   '  <hr style="border:0; border-top:1px solid #ccc;">' .
-                   '  <table style="width:100%;">' .
-                   '    <tr>' .
-                   '      <td style="padding:5px 0;"><b>Zone wählen:</b></td>' .
-                   '      <td><select id="os_zone" style="width:100%; padding:4px;">' . $dropdown_options . '</select></td>' .
-                   '    </tr>' .
-                   '    <tr>' .
-                   '      <td style="padding:5px 0;"><b>Dauer:</b></td>' .
-                   '      <td><input id="os_time" type="text" value="300" size="5" style="padding:4px; text-align:center;"> Sek.</td>' .
-                   '    </tr>' .
-                   '  </table>' .
-                   '  <br>' .
-                   '  <div style="text-align:right;">' .
-                   '    <button onclick="var z=document.getElementById(\'os_zone\').value; FW_cmd(\'/fhem?cmd=set ' . $name . ' station_\'+z+\'_stop\'); $(\'.os_dialog\').dialog(\'close\').remove();" style="padding:6px 12px; background:#d9534f; color:white; border:0; border-radius:4px; cursor:pointer; margin-right:5px;">Zone Stop</button>' .
-                   '    <button onclick="var z=document.getElementById(\'os_zone\').value; var t=document.getElementById(\'os_time\').value; FW_cmd(\'/fhem?cmd=set ' . $name . ' station_\'+z+\'_start \'+t); $(\'.os_dialog\').dialog(\'close\').remove();" style="padding:6px 12px; background:#5cb85c; color:white; border:0; border-radius:4px; cursor:pointer;">Zone Start</button>' .
-                   '  </div>' .
-                   '</div>';
-        
-        # Zeilenumbrüche für JavaScript entfernen
-        $html =~ s/\n/ /g;
-        $html =~ s/\r/ /g;
-        
-        # 3. HTML in Base64 codieren
-        my $b64_html = encode_base64($html);
-        $b64_html =~ s/\n//g;
-        $b64_html =~ s/\r//g;
-        
-        # 4. DER SYSTEM-INTEGRIERTE WEG: Wir senden das JS-Popup direkt an FHEMWEB
-        if (defined($main::FW_wname)) {
-            # Baut das JS-Kommando zusammen
-            my $js_code = "\$('<div class=\"os_dialog\">').html(atob('" . $b64_html . "')).dialog({modal:true, title:'Garten bewässern', width:'auto'});";
-            
-            # Schiebt den Befehl direkt in die aktive FHEMWEB-Instanz
-            FW_json("[\"inline\",\"$js_code\"]");
-            return undef; # Verhindert, dass FHEM irgendeinen Text ins Web-Interface schreibt!
-        }
-        
-        # Fallback für Scripte, falls keine Webschnittstelle aktiv ist
-        return "Popup kann nur in FHEMWEB geöffnet werden.";
+        # Wird im Hintergrund aufgerufen, wenn über die Weboberfläche geschaltet wird.
+        # Es gibt keinen Text zurück und stürzt niemals ab.
+        return undef; 
     }
     
     if ($cmd =~ /^station_(\d+)_start$/) {
@@ -465,6 +415,38 @@ sub OpenSprinkler_Poll($) {
     if (defined($attr{$name}) && defined($attr{$name}{interval})) {
         $interval = int($attr{$name}{interval});
     }
+
+    # --- NATIVES POPUP ÜBER devStateIcon GENERIEREN ---
+                    my $active_attr = AttrVal($hash->{NAME}, "stations", "");
+                    my $dropdown_options = "";
+                    for (my $i = 0; $i < $max_stations; $i++) {
+                        if ($active_attr eq "" || $active_attr =~ /station_$i/) {
+                            my $alias = ReadingsVal($hash->{NAME}, "station_" . $i . "_name", "Station $i");
+                            $dropdown_options .= "<option value='$i'>$alias (ID: $i)</option>";
+                        }
+                    }
+
+                    # Der HTML-Inhalt des Popups
+                    my $popup_html = "<div style='padding:15px; min-width:260px; text-align:left;'>".
+                                     "  <h3>Zone starten</h3>".
+                                     "  Zone: <select id='os_zone_$name' style='width:100%;'>$dropdown_options</select><br><br>".
+                                     "  Dauer: <input id='os_time_$name' type='text' value='300' size='4'> Sek.<br><br>".
+                                     "  <button onclick=\"FW_cmd('/fhem?cmd=set $name station_'+document.getElementById('os_zone_$name').value+'_start '+document.getElementById('os_time_$name').value); $('.ui-dialog-content').dialog('close');\" style='background:#5cb85c; color:white; border:0; padding:5px 10px; border-radius:4px;'>Start</button> ".
+                                     "  <button onclick=\"FW_cmd('/fhem?cmd=set $name station_'+document.getElementById('os_zone_$name').value+'_stop'); $('.ui-dialog-content').dialog('close');\" style='background:#d9534f; color:white; border:0; padding:5px 10px; border-radius:4px;'>Stop</button>".
+                                     "</div>";
+
+                    # Wir entfernen Zeilenumbrüche
+                    $popup_html =~ s/\n/ /g;
+                    $popup_html =~ s/\r/ /g;
+                    # Maskieren einfache Anführungszeichen für den FHEMWEB-Link
+                    $popup_html =~ s/'/\\'/g;
+
+                    # Wir schreiben ein dynamisches Reading, das FHEMWEB als klickbaren Link interpretiert
+                    my $icon_link = "connected <a href=\"javascript:void(0)\" onclick=\"\$('<div>').html('$popup_html').dialog({modal:true,title:'Bewässerung',width:'auto'});\" style='margin-left:10px; text-decoration:none;'>⚙️ [Zonen steuern]</a>";
+                    
+                    readingsSingleUpdate($hash, "state_icon", $icon_link, 1);
+                    # -----------------------------------------------------------------
+    
     RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
     InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
 }
