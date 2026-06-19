@@ -343,23 +343,26 @@ sub OpenSprinkler_Poll($) {
                     readingsEndUpdate($hash, 1);
                 }
 
-                # BLOCK 3: Ventilzustände & Rechnungen mit fehlerisoliertem, gekapseltem Eval
+                # BLOCK 3: Ventilzustände und minutengenau fortlaufende Kalendertag-Berechnungen
                 if (exists $json->{status} && exists $json->{status}->{sn}) {
                     readingsBeginUpdate($hash);
                     my $stations = $json->{status}->{sn};
+                        
                     for (my $i = 0; $i < @$stations; $i++) {
                         if ($i < $max_stations && ($active_attr eq "" || $active_attr =~ /station_$i/)) {
                             my $state_val = $stations->[$i] ? "on" : "off";
                             my $old_state = ReadingsVal($hash->{NAME}, "station_" . $i . "_state", "unknown");
                             
+                            # Zeitstempel der Status-Reading-Änderung NUR bei echtem Wechsel aktualisieren!
                             if ($state_val ne $old_state) {
                                 readingsBulkUpdate($hash, "station_".$i."_state", $state_val);
                             }
                             
+                            # Hole den neustartsicheren FHEM-Timestamp
                             my $ts = ReadingsTimestamp($hash->{NAME}, "station_" . $i . "_state", 0);
-                            
+                                
                             if ($state_val eq "on") {
-                                # JEDE BERECHNUNG ISOLIERT IN EINEM EIGENEN EVAL, DAMIT DIE SCHLEIFE UND DER CALL-STACK WEITERLAUFEN!
+                                # 1. LIVE-BERECHNUNG: _runSince (Format MM:SS)
                                 if ($ts ne "0" && main->can("SYSMON_decode_time_diff")) {
                                     my $diff = time() - time_str2num($ts);
                                     eval {
@@ -367,27 +370,31 @@ sub OpenSprinkler_Poll($) {
                                         readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
                                     };
                                 }
-                                readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "läuft gerade");
+                                # Wenn sie läuft, frieren wir den lastRun ein
+                                readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "running");
                             } 
                             else {
+                                # Wenn sie steht, leeren wir die Live-Laufzeit
                                 readingsBulkUpdate($hash, "station_" . $i . "_runSince", "");
-                                if ($old_state eq "on") {
-                                    if ($ts ne "0" && main->can("SYSMON_decode_time_diff")) {
-                                        my $day_start = substr($ts, 0, 10) . " 00:00:01";
-                                        my $diff = time() - time_str2num($day_start);
-                                        eval {
-                                            my @var = split(/ /, sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)));
-                                            readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $var[0]);
-                                        };
-                                        if ($@) {
-                                            readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "Fehler");
-                                        }
-                                    }
+                                    
+                                # 2. ISOLIERTE API-UNABHÄNGIGE LIVE-BERECHNUNG: _lastRun (Fortlaufende Tage-Differenz)
+                                # Wir berechnen den Wert JETZT bei jedem Poll live, damit er nachts automatisch hochzählt!
+                                if ($ts ne "0" && $old_state ne "unknown" && main->can("SYSMON_decode_time_diff")) {
+                                    # Holt den Startzeitpunkt (00:00:01) des Tages, an dem die Station das LETZTE Mal geschaltet hat
+                                    my $day_start = substr($ts, 0, 10) . " 00:00:01";
+                                    my $diff = time() - time_str2num($day_start);
+                                    
+                                    eval {
+                                        my @var = split(/ /, sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)));
+                                        # Schreibt den fortlaufenden Tageswert (0, 1, 2...) aktiv in das Reading
+                                        readingsBulkUpdate($hash, "station_" . $i . "_lastRun", $var[0]);
+                                    };
                                 }
                                 else {
+                                    # Fallback bei der Ersteinrichtung
                                     my $current_lastrun = ReadingsVal($hash->{NAME}, "station_" . $i . "_lastRun", "");
-                                    if ($current_lastrun eq "" || $current_lastrun eq "läuft gerade") {
-                                        readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "keine Daten");
+                                    if ($current_lastrun eq "" || $current_lastrun eq "running") {
+                                        readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "no Data");
                                     }
                                 }
                             }
