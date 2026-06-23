@@ -251,6 +251,15 @@ sub OpenSprinkler_Poll($) {
         return undef;
     }
 
+    # NEUSTARTSCHUTZ: Wenn FHEM gerade noch im Boot-Vorgang (global:init) ist, 
+    # brechen wir ab und starten den Poll in 5 Sekunden neu, wenn alle Attribute geladen sind!
+    if ($init_done == 0) {
+        RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+        InternalTimer(time() + 5, \&OpenSprinkler_Poll, $hash, 0);
+        Log3 $name, 4, "OpenSprinkler ($name) - Systemstart aktiv. Verschiebe ersten Poll um 5 Sekunden.";
+        return undef;
+    }
+
     my $url = "http://$hash->{IP}/ja?pw=$hash->{helper}{PW}";
 
     HttpUtils_NonblockingGet({
