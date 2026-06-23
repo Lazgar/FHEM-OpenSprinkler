@@ -338,7 +338,7 @@ sub OpenSprinkler_Poll($) {
                 }
                 readingsEndUpdate($hash, 1);
 
-                my $active_attr = AttrVal($hash->{NAME}, "active_stations", "");
+                my $active_attr = AttrVal($hash->{NAME}, "stations", "");
 
                 # BLOCK 2: Stationsnamen
                 if (exists $json->{stations} && exists $json->{stations}->{snames}) {
