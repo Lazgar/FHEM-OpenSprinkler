@@ -371,17 +371,26 @@ sub OpenSprinkler_Poll($) {
                             my $ts = ReadingsTimestamp($hash->{NAME}, "station_" . $i . "_state", 0);
                                 
                             if ($state_val eq "on") {
-                                # 1. LIVE-BERECHNUNG: _runSince (Format MM:SS)
-                                if ($ts ne "0" && main->can("SYSMON_decode_time_diff")) {
-                                    my $diff = time() - time_str2num($ts);
-                                    eval {
-                                        my $val = substr(sprintf("%d %01d:%02d", SYSMON_decode_time_diff($diff)), 2, 4);
+                                    # 1. LIVE-BERECHNUNG: _runSince (Format HH:MM oder MM Min.)
+                                    if ($ts ne "0") {
+                                        my $diff = time() - time_str2num($ts);
+                                        
+                                        my $hours   = int($diff / 3600);
+                                        my $minutes = int(($diff % 3600) / 60);
+                                        
+                                        my $val;
+                                        if ($hours > 0) {
+                                            # Format für lange Laufzeiten (z. B. 10:15 statt 10:15:30)
+                                            $val = sprintf("%02d:%02d", $hours, $minutes);
+                                        } else {
+                                            # Standard-Format unter einer Stunde (z. B. 15 Min.)
+                                            $val = sprintf("%02d Min.", $minutes);
+                                        }
+                                        
                                         readingsBulkUpdate($hash, "station_" . $i . "_runSince", $val);
-                                    };
+                                    }
+                                    readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "running");
                                 }
-                                # Wenn sie läuft, frieren wir den lastRun ein
-                                readingsBulkUpdate($hash, "station_" . $i . "_lastRun", "running");
-                            } 
                             else {
                                 # Wenn sie steht, leeren wir die Live-Laufzeit
                                 readingsBulkUpdate($hash, "station_" . $i . "_runSince", "");
