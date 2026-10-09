@@ -17,7 +17,7 @@ sub OpenSprinkler_Initialize($) {
     $hash->{AttrFn}   = "OpenSprinkler_Attr"; 
 
     my $stations = "station_0,station_1,station_2,station_3,station_4,station_5,station_6,station_7";    
-    $hash->{AttrList} = "interval stations:multiple-strict,$stations " . $readingFnAttributes;
+    $hash->{AttrList} = "disable:1,0 interval stations:multiple-strict,$stations " . $readingFnAttributes;
 }
 
 # Hilfsfunktion: Aktualisiert die AttrList im laufenden Betrieb
@@ -28,7 +28,7 @@ sub OpenSprinkler_UpdateAttrList($$) {
         push(@st_array, "station_$i");
     }
     my $stations_string = join(",", @st_array);
-    $hash->{AttrList} = "interval stations:multiple-strict,$stations_string " . $readingFnAttributes;
+    $hash->{AttrList} = "disable:1,0 interval stations:multiple-strict,$stations_string " . $readingFnAttributes;
 }
 
 # Definition: define <name> OpenSprinkler <IP-Adresse>
@@ -81,6 +81,21 @@ sub OpenSprinkler_Attr($$$$) {
     my $hash = $defs{$name};
     my $max_stations = $hash->{helper}{MAX_STATIONS} // 8;
 
+    # Validierung: ein Intervall von 0 oder Text wuerde den Controller dauernd abfragen
+    if ($attrName eq "interval" && $cmd eq "set") {
+        return "interval must be a number of seconds (minimum 5)" if (!defined($attrVal) || $attrVal !~ /^\d+$/ || $attrVal < 5);
+    }
+
+    if ($attrName eq "disable" && defined($hash)) {
+        if ($cmd eq "set" && $attrVal) {
+            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+            readingsSingleUpdate($hash, "state", "disabled", 1);
+        } elsif (defined($hash->{helper}{PW}) && $init_done) {
+            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+            InternalTimer(time() + 1, \&OpenSprinkler_Poll, $hash, 0);
+        }
+    }
+
     if ($attrName eq "interval" && defined($hash) && defined($hash->{helper}{PW})) {
         if ($cmd eq "set") {
             RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
@@ -126,99 +141,83 @@ sub OpenSprinkler_Set($@) {
     my ($hash, @a) = @_;
     my $name = $hash->{NAME};
     my $max_stations = $hash->{helper}{MAX_STATIONS} // 8;
-    
-    my @cmd_list;
-    
-    # 1. DYNAMISCHES MENÃœ: Wenn kein Passwort im Speicher ist, NUR "password" anbieten!
-    if (!defined($hash->{helper}{PW})) {
-        push(@cmd_list, "password:textField"); 
-        my $usage = join(" ", @cmd_list);
-        return $usage if (@a < 2);
-        
-        my $cmd = $a[1];
 
-        
-        
-        if ($cmd eq "password") {
-            return "Usage: set $name password <your_password>" if (@a < 3);
-            my $raw_pw = $a[2];
-            
-            # Speichern im offiziellen FHEM-Secure-Speicher
-            if (defined(&setKeyValue)) {
-                setKeyValue($name . "_password", $raw_pw);
-                $hash->{helper}{PW} = md5_hex($raw_pw);
-                Log3 $name, 3, "OpenSprinkler ($name) - Passwort erfolgreich verschlÃ¼sselt gespeichert.";
-                
-                RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
-                OpenSprinkler_Poll($hash);
-                
-                # Zwingt den Browser zu einem Reload, damit alle Befehle aufklappen!
-                FW_locationReload();
-            } else {
-                return "async:FW_msg('FHEM setKeyValue-Schnittstelle im Core nicht erreichbar.')";
-            }
-        }
-    }
-    
-    # 2. STANDARD-MENÃœ (Wird erst geladen, wenn das PW verifiziert ist)
-    push(@cmd_list, "password:textField");
-
-    # NEU: Aktive Stationen aus dem Attribut holen
-    my $stations_attr = AttrVal($name, "stations", "");
-    
-    for (my $i = 0; $i < $max_stations; $i++) {
-        # FILTER: Nur ins MenÃ¼ aufnehmen, wenn das Attribut leer ist ODER die Station angehakt wurde
-        if ($stations_attr eq "" || $stations_attr =~ /station_$i/) {
-            push(@cmd_list, "station_" . $i . "_start:textField");
-            push(@cmd_list, "station_" . $i . "_stop:noArg");
-        }
-    }
-    push(@cmd_list, "rainDelay:textField");
-    push(@cmd_list, "system_enabled:on,off");
-    
-    my $usage = join(" ", @cmd_list);
-    return $usage if (@a < 2);
-    
+    return "\"set $name\" needs at least one argument" if (@a < 2);
     my $cmd = $a[1];
-    
-    # Passwort-Ã„nderung im laufenden Betrieb
+
+    # Passwort setzen: immer moeglich, auch ohne vorhandenes Passwort
     if ($cmd eq "password") {
         return "Usage: set $name password <your_password>" if (@a < 3);
         my $raw_pw = $a[2];
-        if (defined(&setKeyValue)) {
-            setKeyValue($name . "_password", $raw_pw);
-            $hash->{helper}{PW} = md5_hex($raw_pw);
-            FW_locationReload();
-        }
+
+        # Speichern im offiziellen FHEM-Speicher (keystore)
+        return "FHEM setKeyValue interface not available" if (!defined(&setKeyValue));
+        setKeyValue($name . "_password", $raw_pw);
+        $hash->{helper}{PW} = md5_hex($raw_pw);
+        Log3 $name, 3, "OpenSprinkler ($name) - Passwort gespeichert.";
+
+        RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+        OpenSprinkler_Poll($hash);
+
+        # FHEMWEB zwingt den Browser zu einem Reload, damit alle Befehle erscheinen
+        FW_locationReload() if (defined(&FW_locationReload));
+        return undef;
     }
-    
+
+    # Ohne Passwort wird nur "password" angeboten
+    my @cmd_list = ("password:textField");
+
+    if (defined($hash->{helper}{PW})) {
+        # Nur aktive Stationen (Attribut "stations", leer = alle) ins Menue aufnehmen
+        my $stations_attr = AttrVal($name, "stations", "");
+        for (my $i = 0; $i < $max_stations; $i++) {
+            if ($stations_attr eq "" || $stations_attr =~ /station_$i\b/) {
+                push(@cmd_list, "station_" . $i . "_start:textField");
+                push(@cmd_list, "station_" . $i . "_stop:noArg");
+            }
+        }
+        push(@cmd_list, "rainDelay:textField");
+        push(@cmd_list, "system_enabled:on,off");
+    }
+
+    my $usage = join(" ", @cmd_list);
+
+    if (!defined($hash->{helper}{PW}) || $cmd !~ /^(station_(\d+)_(start|stop)|rainDelay|system_enabled)$/) {
+        return "Unknown argument $cmd, choose one of $usage";
+    }
+
     if ($cmd =~ /^station_(\d+)_start$/) {
         my $sid = $1;
+        return "Station $sid is not available" if ($sid >= $max_stations);
         return "Usage: set $name $cmd <seconds>" if (@a < 3);
         my $sekunden = $a[2];
-        
-        readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
-        
+        return "$cmd: seconds must be a whole number between 1 and 64800" if ($sekunden !~ /^\d+$/ || $sekunden < 1 || $sekunden > 64800);
+
         my $url = "http://$hash->{IP}/cm?pw=$hash->{helper}{PW}&sid=$sid&en=1&t=$sekunden";
-        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.");
+        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestartet fuer $sekunden Sekunden.", sub {
+            readingsSingleUpdate($hash, "station_" . $sid . "_duration", $sekunden, 1);
+        });
         return undef;
     }
     elsif ($cmd =~ /^station_(\d+)_stop$/) {
         my $sid = $1;
-        readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
+        return "Station $sid is not available" if ($sid >= $max_stations);
         my $url = "http://$hash->{IP}/cm?pw=$hash->{helper}{PW}&sid=$sid&en=0";
-        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestoppt.");
+        OpenSprinkler_SendCommand($hash, $url, "Station $sid gestoppt.", sub {
+            readingsSingleUpdate($hash, "station_" . $sid . "_duration", 0, 1);
+        });
         return undef;
     }
     elsif ($cmd eq "rainDelay") {
         return "Usage: set $name $cmd <hours>" if (@a < 3);
         my $hours = $a[2];
+        return "$cmd: hours must be a whole number between 0 and 32767" if ($hours !~ /^\d+$/ || $hours > 32767);
         my $url = "http://$hash->{IP}/cv?pw=$hash->{helper}{PW}&rd=$hours";
         OpenSprinkler_SendCommand($hash, $url, "Regen-Verzoegerung auf $hours Stunden gesetzt");
         return undef;
     }
     elsif ($cmd eq "system_enabled") {
-        return "Usage: set $name $cmd on|off" if (@a < 3);
+        return "Usage: set $name $cmd on|off" if (@a < 3 || $a[2] !~ /^(on|off)$/);
         my $val_state = $a[2];
         my $state = ($val_state eq "on") ? 1 : 0;
         my $url = "http://$hash->{IP}/cv?pw=$hash->{helper}{PW}&en=$state";
@@ -226,12 +225,13 @@ sub OpenSprinkler_Set($@) {
         return undef;
     }
 
-    return $usage;
+    return "Unknown argument $cmd, choose one of $usage";
 }
 
 sub OpenSprinkler_Get($@) {
-    my ($hash, @a) = @_;    
-    return "Unknown argument $a[1], choose status" if ($a[1] ne "status");
+    my ($hash, @a) = @_;
+    return "\"get $hash->{NAME}\" needs at least one argument" if (@a < 2);
+    return "Unknown argument $a[1], choose one of status:noArg" if ($a[1] ne "status");
     
     if (!defined($hash->{helper}{PW})) {
         return "Fehler: Status-Abruf nicht mÃ¶glich. Kein Passwort hinterlegt.";
@@ -260,6 +260,13 @@ sub OpenSprinkler_Poll($) {
         return undef;
     }
 
+    if (AttrVal($name, "disable", 0)) {
+        readingsSingleUpdate($hash, "state", "disabled", 1) if (ReadingsVal($name, "state", "") ne "disabled");
+        RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
+        InternalTimer(time() + 60, \&OpenSprinkler_Poll, $hash, 0);
+        return undef;
+    }
+
     my $url = "http://$hash->{IP}/ja?pw=$hash->{helper}{PW}";
 
     HttpUtils_NonblockingGet({
@@ -284,9 +291,19 @@ sub OpenSprinkler_Poll($) {
             };
             if ($@ || !$json) {
                 Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] JSON Parse Error oder leere Daten: $@";
+                readingsSingleUpdate($hash, "state", "error", 1);
                 return; # Schließt den Socket sauber
             }
             
+            # Antwort ohne Daten, aber mit Ergebniscode: {"result":2} = Passwort falsch usw.
+            if (ref($json) eq 'HASH' && !exists $json->{settings} && exists $json->{result}) {
+                my %res = (2 => "wrong_password", 3 => "error (missing parameter)", 16 => "error (data missing)");
+                my $st = $res{$json->{result}} // "error (result $json->{result})";
+                Log3 $hash->{NAME}, 2, "OpenSprinkler [$hash->{NAME}] Controller meldet $st";
+                readingsSingleUpdate($hash, "state", $st, 1);
+                return;
+            }
+
             # Schritt 2: Sichere Datenverarbeitung
             if (exists $json->{settings}) {
                 my $s = $json->{settings};
@@ -307,7 +324,10 @@ sub OpenSprinkler_Poll($) {
 
                     if (exists $o->{ext}) {
                         my $ext_boards = int($o->{ext});
-                        my $calc_stations = 8 + ($ext_boards * 16);
+                        # Die Firmware zaehlt Boards zu je 8 Stationen; die tatsaechliche Anzahl steht in status.nstations
+                        my $calc_stations = (ref($json->{status}) eq 'HASH' && defined($json->{status}{nstations}) && $json->{status}{nstations} =~ /^\d+$/)
+                                          ? int($json->{status}{nstations})
+                                          : 8 + ($ext_boards * 8);
                         
                         if (!defined($hash->{helper}{MAX_STATIONS}) || $hash->{helper}{MAX_STATIONS} != $calc_stations) {
                             $hash->{helper}{MAX_STATIONS} = $calc_stations;
@@ -437,10 +457,10 @@ sub OpenSprinkler_Poll($) {
     InternalTimer(time() + $interval, \&OpenSprinkler_Poll, $hash, 0);
 }
 
-# Hilfsfunktion zur BefehlsÃ¼bertragung
-sub OpenSprinkler_SendCommand($$$) {
-    my ($hash, $url, $logMsg) = @_;
-    
+# Hilfsfunktion zur Befehlsuebertragung; $on_ok wird nur bei {"result":1} aufgerufen
+sub OpenSprinkler_SendCommand($$$;$) {
+    my ($hash, $url, $logMsg, $on_ok) = @_;
+
     HttpUtils_NonblockingGet({
         url     => $url,
         timeout => 5,
@@ -448,21 +468,71 @@ sub OpenSprinkler_SendCommand($$$) {
         callback => sub {
             my ($param, $err, $data) = @_;
             my $hash = $param->{hash};
-            
+            my $name = $hash->{NAME};
+
             if ($err) {
-                Log3 $hash->{NAME}, 3, "OpenSprinkler [$hash->{NAME}] Befehl fehlgeschlagen: $err";
+                Log3 $name, 3, "OpenSprinkler [$name] Befehl fehlgeschlagen: $err";
+                readingsSingleUpdate($hash, "last_command_result", "error: $err", 1);
                 return;
             }
-            
-            eval {
-                my $res = decode_json($data);
-                if (exists $res->{result} && $res->{result} == 1) {
-                    Log3 $hash->{NAME}, 4, "OpenSprinkler [$hash->{NAME}]: $logMsg erfolgreich.";
-                    OpenSprinkler_Poll($hash);
-                }
-            };
+
+            my $res = eval { decode_json($data) };
+            if (ref($res) eq 'HASH' && defined $res->{result} && $res->{result} == 1) {
+                Log3 $name, 4, "OpenSprinkler [$name]: $logMsg erfolgreich.";
+                readingsSingleUpdate($hash, "last_command_result", "ok", 1);
+                $on_ok->() if (ref($on_ok) eq 'CODE');
+                OpenSprinkler_Poll($hash);
+            } else {
+                my $code = (ref($res) eq 'HASH' && defined $res->{result}) ? $res->{result} : "unparsable answer";
+                Log3 $name, 2, "OpenSprinkler [$name]: Befehl abgelehnt (result $code): $logMsg";
+                readingsSingleUpdate($hash, "last_command_result", "error: result $code", 1);
+            }
         }
     });
 }
 
 1;
+
+=pod
+=item device
+=item summary    Integration of an OpenSprinkler irrigation controller (local HTTP API)
+=item summary_DE Anbindung eines OpenSprinkler-Bew&auml;sserungscontrollers (lokale HTTP-API)
+=begin html
+
+<a name="OpenSprinkler"></a>
+<h3>OpenSprinkler</h3>
+<ul>
+  Non-blocking integration of an OpenSprinkler (firmware 2.x/3.x) over its local HTTP API.<br><br>
+  <a name="OpenSprinklerdefine"></a>
+  <b>Define</b>
+  <ul><code>define &lt;name&gt; OpenSprinkler &lt;ip&gt;</code><br>
+  Polling starts after the password has been stored: <code>set &lt;name&gt; password &lt;pw&gt;</code> (kept in the FHEM key store, only the MD5 hash is sent).</ul><br>
+  <a name="OpenSprinklerset"></a>
+  <b>Set</b>
+  <ul>
+    <li><code>password &lt;pw&gt;</code></li>
+    <li><code>station_&lt;N&gt;_start &lt;seconds&gt;</code> (1..64800), <code>station_&lt;N&gt;_stop</code></li>
+    <li><code>rainDelay &lt;hours&gt;</code> (0..32767)</li>
+    <li><code>system_enabled on|off</code></li>
+  </ul><br>
+  <a name="OpenSprinklerget"></a>
+  <b>Get</b>
+  <ul><li><code>status</code> &ndash; immediate poll</li></ul><br>
+  <a name="OpenSprinklerattr"></a>
+  <b>Attributes</b>
+  <ul>
+    <li><code>interval</code> &ndash; polling interval in seconds (minimum 5, default 60)</li>
+    <li><code>stations</code> &ndash; selection of the active stations (check boxes); empty = all stations</li>
+    <li><code>disable</code> &ndash; 1 stops polling</li>
+  </ul><br>
+  <b>Readings</b>
+  <ul>
+    <li><code>state</code>: connected, error, disabled, missing_password, wrong_password</li>
+    <li><code>last_command_result</code>: ok or error: &hellip; for the last set command</li>
+    <li><code>current_mA</code>, <code>water_level_percent</code>, <code>firmware_version</code>, <code>hardware_version</code>, <code>hardware_type</code>, <code>extension_boards</code>, <code>total_stations</code>, <code>system_enabled</code>, <code>rain_delay_active</code>, <code>rain_delay_until</code></li>
+    <li>per station: <code>station_N_name</code>, <code>_state</code>, <code>_duration</code>, <code>_lastDuration</code>, <code>_runSince</code>, <code>_lastRun</code></li>
+  </ul>
+</ul>
+
+=end html
+=cut
