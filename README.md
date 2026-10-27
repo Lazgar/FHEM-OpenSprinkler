@@ -56,7 +56,7 @@ Das Passwort wird sofort per MD5 gehasht und im sicheren FHEMWEB-Speicher abgele
 | Attribut | Typ | Beschreibung |
 | :--- | :--- | :--- |
 | `interval` | Zahl (Sekunden) | Polling-Intervall für den Datenabruf. Mindestens `5`, Standard: `60`. |
-| `disable` | `1`/`0` | `1` stoppt das Polling (`state` = `disabled`). |
+| `disable` | `1`/`0` | `1` sperrt alle Steuerbefehle (Stationen, `rainDelay`, `system_enabled`); das Polling läuft weiter, Reading `locked` = `1`. `set password` und `get status` bleiben erlaubt. |
 | `stations` | `multiple-strict` | Checkbox-Liste aller erkannten Stationen. Nur angehakte Stationen erzeugen Readings und tauchen im `set`-Dropdown auf. |
 
 ---
@@ -78,7 +78,8 @@ Das Passwort wird sofort per MD5 gehasht und im sicheren FHEMWEB-Speicher abgele
 
 Das Modul erzeugt globale Hardwaredaten sowie spezifische Readings pro **aktiver** Station:
 
-* `state`: Allgemeiner Verbindungsstatus (`connected`, `error`, `disabled`, `missing_password`, `wrong_password`).
+* `state`: Allgemeiner Verbindungsstatus (`connected`, `error`, `missing_password`, `wrong_password`).
+* `locked`: `1`, wenn `disable` gesetzt ist (Steuerbefehle gesperrt), sonst `0`.
 * `last_command_result`: Ergebnis des letzten Set-Befehls (`ok` oder `error: …`).
 * `current_mA`: Aktuell gemessene Stromstärke des Controllers.
 * `hardware_type`: Erkennt den Hardware-Typ (z. B. *OSPi Raspberry*, *AC Power Version*, *DC Power Version*).

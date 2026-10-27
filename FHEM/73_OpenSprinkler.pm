@@ -87,10 +87,10 @@ sub OpenSprinkler_Attr($$$$) {
     }
 
     if ($attrName eq "disable" && defined($hash)) {
-        if ($cmd eq "set" && $attrVal) {
-            RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
-            readingsSingleUpdate($hash, "state", "disabled", 1);
-        } elsif (defined($hash->{helper}{PW}) && $init_done) {
+        # disable sperrt nur die Steuerbefehle; das Polling laeuft weiter
+        my $locked = ($cmd eq "set" && $attrVal) ? 1 : 0;
+        readingsSingleUpdate($hash, "locked", $locked, 1) if ($init_done);
+        if (defined($hash->{helper}{PW}) && $init_done) {
             RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
             InternalTimer(time() + 1, \&OpenSprinkler_Poll, $hash, 0);
         }
@@ -186,6 +186,12 @@ sub OpenSprinkler_Set($@) {
         return "Unknown argument $cmd, choose one of $usage";
     }
 
+    # disable 1: Status wird weiter abgefragt, aber keine Steuerbefehle an den Controller
+    if (AttrVal($name, "disable", 0)) {
+        Log3 $name, 3, "OpenSprinkler ($name) - set $cmd abgelehnt: disabled (Befehle gesperrt)";
+        return "$name is disabled: Befehle gesperrt (attr $name disable 0 zum Freigeben)";
+    }
+
     if ($cmd =~ /^station_(\d+)_start$/) {
         my $sid = $1;
         return "Station $sid is not available" if ($sid >= $max_stations);
@@ -257,13 +263,6 @@ sub OpenSprinkler_Poll($) {
         RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
         InternalTimer(time() + 5, \&OpenSprinkler_Poll, $hash, 0);
         Log3 $name, 4, "OpenSprinkler ($name) - Systemstart aktiv. Verschiebe ersten Poll um 5 Sekunden.";
-        return undef;
-    }
-
-    if (AttrVal($name, "disable", 0)) {
-        readingsSingleUpdate($hash, "state", "disabled", 1) if (ReadingsVal($name, "state", "") ne "disabled");
-        RemoveInternalTimer($hash, \&OpenSprinkler_Poll);
-        InternalTimer(time() + 60, \&OpenSprinkler_Poll, $hash, 0);
         return undef;
     }
 
@@ -441,6 +440,7 @@ sub OpenSprinkler_Poll($) {
                     my $nstations = $json->{status};
                     readingsBulkUpdate($hash, "total_stations", $nstations->{nstations}) if exists $nstations->{nstations};
                     readingsBulkUpdate($hash, "state", "connected");
+                    readingsBulkUpdate($hash, "locked", AttrVal($hash->{NAME}, "disable", 0) ? 1 : 0);
                     readingsEndUpdate($hash, 1);
                 }
             }
@@ -523,7 +523,7 @@ sub OpenSprinkler_SendCommand($$$;$) {
   <ul>
     <li><code>interval</code> &ndash; polling interval in seconds (minimum 5, default 60)</li>
     <li><code>stations</code> &ndash; selection of the active stations (check boxes); empty = all stations</li>
-    <li><code>disable</code> &ndash; 1 stops polling</li>
+    <li><code>disable</code> &ndash; 1 blocks all control commands (set station/rainDelay/system_enabled); polling continues, reading <code>locked</code> = 1</li>
   </ul><br>
   <b>Readings</b>
   <ul>

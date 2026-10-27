@@ -195,8 +195,12 @@ def main():
         check("interval text rejected", "minimum 5" in fhem("attr os interval abc"))
         check("interval 30 accepted", fhem("attr os interval 30") == "")
         fhem("attr os disable 1")
-        check("disable: state disabled", wait(lambda: reading("os", "state") == "disabled", 8), reading("os", "state"))
+        check("disable: locked reading 1", wait(lambda: reading("os", "locked") == "1", 8), reading("os", "locked"))
+        check("disable: polling continues (connected)", reading("os", "state") == "connected", reading("os", "state"))
+        check("disable: rainDelay refused", "disabled" in fhem("set os rainDelay 1"))
+        check("disable: station start refused", "disabled" in fhem("set os station_1_start 60"))
         fhem("attr os disable 0")
+        check("enable again: locked reading 0", wait(lambda: reading("os", "locked") == "0", 8), reading("os", "locked"))
         fhem("get os status")
         check("enable again: connected", wait(lambda: reading("os", "state") == "connected", 10), reading("os", "state"))
 
